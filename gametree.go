@@ -89,7 +89,7 @@ func CalculateWinProb(state GameState) [maxNumPlayers]float64 {
 		var bestSubtreeProb [maxNumPlayers]float64
 		potentialActions := rollToPotentialActions[wRoll.ID]
 		for _, action := range potentialActions {
-			if state.CurrentPlayerScore() == 0 && state.ScoreThisRound < 500 / incr && !action.ContinueRolling {
+			if state.CurrentPlayerScore() == 0 && state.ScoreThisRound < 500/incr && !action.ContinueRolling {
 				continue // Must get at least 500 to get on the board.
 			}
 

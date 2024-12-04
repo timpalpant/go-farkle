@@ -8,7 +8,7 @@ const numSides = 6
 // Roll represents an unordered roll of N dice.
 // A roll can hold 1 - maxNumDice dice. Extra entries are
 // at the end of the roll with the value -1.
-type Roll [numSides+1]uint8
+type Roll [numSides + 1]uint8
 
 func NewRoll(dice ...uint8) Roll {
 	if len(dice) > maxNumDice {
@@ -115,7 +115,7 @@ func makeRolls(nDice int) []Roll {
 // and the probability of realizing that combination.
 type WeightedRoll struct {
 	Roll
-	ID int
+	ID   int
 	Prob float64
 }
 
@@ -133,7 +133,7 @@ func makeWeightedRolls(nDice int) []WeightedRoll {
 	for roll, count := range rollToFreq {
 		result = append(result, WeightedRoll{
 			Roll: roll,
-			ID: rollID,
+			ID:   rollID,
 			Prob: float64(count) / float64(totalCount),
 		})
 		rollID++
@@ -142,6 +142,7 @@ func makeWeightedRolls(nDice int) []WeightedRoll {
 	return result
 }
 
+// All possible distinct rolls of N dice.
 var allRolls = func() [maxNumDice + 1][]WeightedRoll {
 	var result [maxNumDice + 1][]WeightedRoll
 	for nDice := 1; nDice <= maxNumDice; nDice++ {
@@ -161,6 +162,7 @@ var allRolls = func() [maxNumDice + 1][]WeightedRoll {
 	return result
 }()
 
+// Number of distinct rolls of 1 - maxNumDice.
 var nDistinctRolls = func() int {
 	n := 0
 	for _, rolls := range allRolls {
@@ -169,6 +171,8 @@ var nDistinctRolls = func() int {
 	return n
 }()
 
+// Mapping of unique, sequential IDs for all possible rolls of 1 - maxNumDice.
+// In the range [0, nDistinctRolls).
 var rollToID = func() map[Roll]int {
 	result := make(map[Roll]int, nDistinctRolls)
 	for _, rolls := range allRolls {
@@ -179,6 +183,7 @@ var rollToID = func() map[Roll]int {
 	return result
 }()
 
+// Lookup of the number of dice for each roll ID.
 var rollNumDice = func() []uint8 {
 	result := make([]uint8, nDistinctRolls)
 	for _, rolls := range allRolls {
