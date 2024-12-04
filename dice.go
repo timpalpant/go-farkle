@@ -27,27 +27,69 @@ func NewRoll(dice ...uint8) Roll {
 
 	r := Roll{}
 	copy(r[:], dice)
+	r.Sort()
 	return r
+}
+
+func NewRollFromCounts(counts [numSides + 1]uint8) Roll {
+	var allDice []Roll
+	for die, count := range counts {
+		allDice = append(allDice, RepeatedRoll(uint8(die), count))
+	}
+
+	return CombineRolls(allDice...)
+}
+
+func RepeatedRoll(die uint8, n uint8) Roll {
+	dice := make([]uint8, n)
+	for i := range dice {
+		dice[i] = die
+	}
+
+	return NewRoll(dice...)
+}
+
+func CombineRolls(rolls ...Roll) Roll {
+	var allDice []uint8
+	for _, roll := range rolls {
+		allDice = append(allDice, roll.Dice()...)
+	}
+
+	return NewRoll(allDice...)
+}
+
+func SubtractRolls(a, b Roll) Roll {
+	aCounts := a.DieCounts()
+	bCounts := b.DieCounts()
+	for die := range aCounts {
+		if bCounts[die] > aCounts[die] {
+			panic(fmt.Errorf("cannot remove %d %ds from roll with only %d",
+				bCounts[die], die, aCounts[die]))
+		}
+
+		aCounts[die] -= bCounts[die]
+	}
+
+	return NewRollFromCounts(aCounts)
 }
 
 func (r *Roll) Sort() {
 	slices.Sort(r.Dice())
 }
 
+func (r Roll) String() string {
+	return fmt.Sprintf("%v", r.Dice())
+}
+
 // The dice in this roll, excluding unused slots.
 func (r Roll) Dice() []uint8 {
-	for i, die := range r {
-		if die <= 0 {
-			return r[:i]
-		}
-	}
-
-	return nil
+	n := r.NumDice()
+	return r[:n]
 }
 
 // The number of dice in this roll, in the range 0 - maxNumDice.
-func (r Roll) NumDice() int {
-	n := 0
+func (r Roll) NumDice() uint8 {
+	n := uint8(0)
 	for _, die := range r {
 		if die > 0 {
 			n++
@@ -56,13 +98,22 @@ func (r Roll) NumDice() int {
 	return n
 }
 
+func (r Roll) DieCounts() [numSides + 1]uint8 {
+	var dieCounts [numSides + 1]uint8
+	for _, die := range r.Dice() {
+		dieCounts[die]++
+	}
+
+	return dieCounts
+}
+
 // Make all distinct permutations of N dice.
 func makeRolls(nDice int) []Roll {
 	if nDice <= 0 {
 		return nil
 	} else if nDice == 1 {
 		result := make([]Roll, 0, numSides)
-		for i := 1; i <= numSides; i++ {
+		for i := uint8(1); i <= numSides; i++ {
 			result = append(result, NewRoll(i))
 		}
 		return result
