@@ -1,6 +1,8 @@
 module github.com/timpalpant/go-farkle
 
-go 1.22.2
+go 1.23.4
+
+require github.com/golang/glog v1.2.3
 
 require (
 	github.com/DataDog/zstd v1.4.5 // indirect
@@ -14,7 +16,6 @@ require (
 	github.com/cockroachdb/tokenbucket v0.0.0-20230807174530-cc333fc44b06 // indirect
 	github.com/getsentry/sentry-go v0.27.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang/glog v1.2.3 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/klauspost/compress v1.16.0 // indirect

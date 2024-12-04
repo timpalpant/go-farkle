@@ -12,6 +12,12 @@ type Action struct {
 	ContinueRolling bool
 }
 
+func init() {
+	if scoreCache[0] != 0 {
+		panic(fmt.Errorf("farkle should have zero score! got %d", scoreCache[0]))
+	}
+}
+
 func ApplyAction(state GameState, action Action) GameState {
 	newScore := state.ScoreThisRound + scoreCache[action.HeldDiceID]
 	if newScore < state.ScoreThisRound {
@@ -79,10 +85,25 @@ var farkleProbs = func() [maxNumDice + 1]float64 {
 	return pFarkle
 }()
 
+// Recursive implementation that forward propagates all possible actions from the current
+// game state and stores results in `db`.
 func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
 	if state.IsGameOver() || state.ScoreThisRound == math.MaxUint8 {
+		winningScore := state.HighestScore()
+		winners := make([]int, 0, maxNumPlayers)
+		for player, score := range state.PlayerScores {
+			if score >= winningScore {
+				winners = append(winners, player)
+			}
+		}
+
+		// Not clear how ties should be considered in terms of "win probability".
+		// We split the win amongst all players with the same score.
 		var result [maxNumPlayers]float64
-		result[0] = 1.0
+		p := 1.0 / float64(len(winners))
+		for _, winner := range winners {
+			result[winner] = p
+		}
 		return result
 	}
 
@@ -111,6 +132,11 @@ func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
 			pWin[i] += wRoll.Prob * bestSubtreeProb[i]
 		}
 	}
+
+	// With non-zero probability, all players will Farkle in a row, resulting
+	// in recursing to the same game state. At this state, the win probabilities
+	// must be the same as the one we are currently calculating.
+	db.Put(state, pWin)
 
 	newState := ApplyAction(state, Action{})
 	pSubtree := CalculateWinProb(newState, db)

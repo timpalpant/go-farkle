@@ -124,13 +124,7 @@ func makeWeightedRolls(nDice int) []WeightedRoll {
 
 	result := make([]WeightedRoll, 0, len(rollToFreq))
 	rollID := 0
-	farkleID := 0
-	var zeroRoll Roll
 	for roll, count := range rollToFreq {
-		if roll == zeroRoll {
-			farkleID = rollID
-		}
-
 		result = append(result, WeightedRoll{
 			Roll: roll,
 			ID:   rollID,
@@ -139,17 +133,13 @@ func makeWeightedRolls(nDice int) []WeightedRoll {
 		rollID++
 	}
 
-	// Make the zero Roll have ID 0, so that the zero Action corresponds to a Farkle.
-	result[farkleID] = result[0]
-	result[0] = WeightedRoll{Prob: 1.0}
-
 	return result
 }
 
 // All possible distinct rolls of N dice.
 var allRolls = func() [maxNumDice + 1][]WeightedRoll {
 	var result [maxNumDice + 1][]WeightedRoll
-	for nDice := 1; nDice <= maxNumDice; nDice++ {
+	for nDice := 0; nDice <= maxNumDice; nDice++ {
 		result[nDice] = makeWeightedRolls(nDice)
 	}
 
