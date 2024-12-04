@@ -135,13 +135,29 @@ func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
 
 	// With non-zero probability, all players will Farkle in a row, resulting
 	// in recursing to the same game state. At this state, the win probabilities
-	// must be the same as the one we are currently calculating.
-	db.Put(state, pWin)
+	// must be the same as the one we are currently calculating. This is true if:
+	//
+	//  p_win = \sum (p_roll * p_action) + p_f * p_win
+	//  (1 - p_f ^ N) * p_win = \sum (p_roll * p_action)
+	//  p_win = \sum (p_roll * p_action) / (1 - p_f)
+	//
+	// Therefore we put zeros into the database now. After computing all other
+	// subtrees (that do not end up in the same state), scale the final result.
+	db.Put(state, [maxNumPlayers]float64{})
 
 	newState := ApplyAction(state, Action{})
 	pSubtree := CalculateWinProb(newState, db)
 	for i := uint8(0); i < state.NumPlayers; i++ {
 		pWin[i] += farkleProbs[state.NumDiceToRoll] * pSubtree[i]
+	}
+
+	// Rescale probabilities to account for recursive farkle into this same state.
+	pTotal := 0.0
+	for _, p := range pWin[:state.NumPlayers] {
+		pTotal += p
+	}
+	for i, p := range pWin[:state.NumPlayers] {
+		pWin[i] = p / pTotal
 	}
 
 	db.Put(state, pWin)

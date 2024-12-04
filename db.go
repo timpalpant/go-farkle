@@ -28,7 +28,7 @@ type InMemoryDB struct {
 	//   - 2: Current total score of player 0
 	//   - 3: Current total score of player 1
 	//   - N+2: Current total score of player N
-	table []float64
+	table      []float64
 	numPlayers int
 
 	nPuts, nHits, nMisses int
@@ -43,7 +43,7 @@ func NewInMemoryDB(numPlayers int) *InMemoryDB {
 	}
 
 	return &InMemoryDB{
-		table: table,
+		table:      table,
 		numPlayers: numPlayers,
 	}
 }
@@ -61,7 +61,7 @@ func LoadInMemoryDB(r io.Reader) (*InMemoryDB, error) {
 }
 
 func calcNumDistinctStates(numPlayers int) int {
-	return maxNumDice << ((numPlayers+1) * numDistinctScoreBits)
+	return maxNumDice << ((numPlayers + 1) * numDistinctScoreBits)
 }
 
 func (db *InMemoryDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
@@ -71,11 +71,11 @@ func (db *InMemoryDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
 }
 
 func (db *InMemoryDB) Get(gs GameState) ([maxNumPlayers]float64, bool) {
-	if (db.nHits + db.nMisses) % 10000000 == 0 {
-		pctComplete := float64(db.nPuts) / float64(len(db.table) / int(gs.NumPlayers))
-		hitRate := float64(db.nHits) / float64(db.nHits + db.nMisses)
+	if (db.nHits+db.nMisses)%10000000 == 0 {
+		pctComplete := float64(db.nPuts) / float64(len(db.table)/int(gs.NumPlayers))
+		hitRate := float64(db.nHits) / float64(db.nHits+db.nMisses)
 		glog.Infof("Database has %d entries (%.1f%% complete). Hit rate: %d hits, %d misses (%.1f%%)",
-			db.nPuts, 100 * pctComplete, db.nHits, db.nMisses, 100 * hitRate)
+			db.nPuts, 100*pctComplete, db.nHits, db.nMisses, 100*hitRate)
 	}
 
 	idx := db.calcOffset(gs)
@@ -100,7 +100,7 @@ func (db *InMemoryDB) WriteTo(w io.Writer) error {
 
 func (db *InMemoryDB) calcOffset(gs GameState) int {
 	// First dimension is number of dice to roll.
-	idx := int(gs.NumDiceToRoll) << ((gs.NumPlayers+1) * numDistinctScoreBits)
+	idx := int(gs.NumDiceToRoll) << ((gs.NumPlayers + 1) * numDistinctScoreBits)
 	// Second dimension is current player score this round.
 	idx += int(gs.ScoreThisRound) << (gs.NumPlayers * numDistinctScoreBits)
 	// Remaining dimesions are player scores.

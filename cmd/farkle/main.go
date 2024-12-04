@@ -49,7 +49,7 @@ func saveDB(db farkle.DB, dbPath string) error {
 		return fmt.Errorf("error opening database: %w", err)
 	}
 	defer f.Close()
-	w := bufio.NewWriterSize(f, 4 * 1024 * 1024)
+	w := bufio.NewWriterSize(f, 4*1024*1024)
 	if err := db.WriteTo(w); err != nil {
 		return err
 	}
