@@ -3,6 +3,7 @@ package farkle
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
 	"math"
 
 	"github.com/cockroachdb/pebble"
@@ -15,6 +16,8 @@ type DB interface {
 	// Retrieve a stored result for the given game state.
 	// Returns the result (if found), and a bool indicating whether or not it was found.
 	Get(state GameState) ([maxNumPlayers]float64, bool)
+	// Serialize the database to the given io.Writer.
+	WriteTo(io.Writer) error
 }
 
 type InMemoryDB struct {
@@ -26,6 +29,7 @@ type InMemoryDB struct {
 	//   - 3: Current total score of player 1
 	//   - N+2: Current total score of player N
 	table []float64
+	numPlayers int
 
 	nPuts, nHits, nMisses int
 }
@@ -40,7 +44,20 @@ func NewInMemoryDB(numPlayers int) *InMemoryDB {
 
 	return &InMemoryDB{
 		table: table,
+		numPlayers: numPlayers,
 	}
+}
+
+func LoadInMemoryDB(r io.Reader) (*InMemoryDB, error) {
+	var numPlayers int64
+	err := binary.Read(r, binary.LittleEndian, &numPlayers)
+	if err != nil {
+		return nil, err
+	}
+
+	db := NewInMemoryDB(int(numPlayers))
+	binary.Read(r, binary.LittleEndian, &db.table)
+	return db, nil
 }
 
 func calcNumDistinctStates(numPlayers int) int {
@@ -71,6 +88,14 @@ func (db *InMemoryDB) Get(gs GameState) ([maxNumPlayers]float64, bool) {
 	copy(result[:], db.table[idx:idx+int(gs.NumPlayers)])
 	db.nHits++
 	return result, true
+}
+
+func (db *InMemoryDB) WriteTo(w io.Writer) error {
+	if err := binary.Write(w, binary.LittleEndian, int64(db.numPlayers)); err != nil {
+		return err
+	}
+
+	return binary.Write(w, binary.LittleEndian, db.table)
 }
 
 func (db *InMemoryDB) calcOffset(gs GameState) int {
@@ -140,4 +165,8 @@ func (db *PebbleDB) Get(gs GameState) ([maxNumPlayers]float64, bool) {
 		pWin[i/8] = math.Float64frombits(binary.LittleEndian.Uint64(buf))
 	}
 	return pWin, true
+}
+
+func (db *PebbleDB) WriteTo(w io.Writer) error {
+	return nil // PebbleDB is already on disk.
 }
