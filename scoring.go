@@ -74,8 +74,7 @@ func remainingTricks(roll Roll, trick Trick) [][]Trick {
 
 func enumeratePossibleTricks(roll Roll) [][]Trick {
 	var result [][]Trick
-	dieCounts := roll.DieCounts()
-	for die, count := range dieCounts {
+	for die, count := range roll {
 		if count >= 1 && (die == 1 || die == 5) {
 			trick := Trick{
 				Type: singles[die],
@@ -122,28 +121,28 @@ func enumeratePossibleTricks(roll Roll) [][]Trick {
 		}
 	}
 
-	if isStraight(dieCounts) {
+	if isStraight(roll) {
 		trick := Trick{
 			Type: Straight,
 			Dice: roll,
 		}
 
 		result = append(result, []Trick{trick})
-	} else if isThreePairs(dieCounts) {
+	} else if isThreePairs(roll) {
 		trick := Trick{
 			Type: ThreePairs,
 			Dice: roll,
 		}
 
 		result = append(result, []Trick{trick})
-	} else if isFourOfAKindPlusPair(dieCounts) {
+	} else if isFourOfAKindPlusPair(roll) {
 		trick := Trick{
 			Type: FourOfAKindPlusPair,
 			Dice: roll,
 		}
 
 		result = append(result, []Trick{trick})
-	} else if isTwoTriplets(dieCounts) {
+	} else if isTwoTriplets(roll) {
 		trick := Trick{
 			Type: TwoTriplets,
 			Dice: roll,
@@ -155,9 +154,9 @@ func enumeratePossibleTricks(roll Roll) [][]Trick {
 	return result
 }
 
-func isStraight(dieCounts [numSides + 1]uint8) bool {
+func isStraight(roll Roll) bool {
 	for die := 1; die <= numSides; die++ {
-		if dieCounts[die] != 1 {
+		if roll[die] != 1 {
 			return false
 		}
 	}
@@ -165,9 +164,9 @@ func isStraight(dieCounts [numSides + 1]uint8) bool {
 	return true
 }
 
-func isThreePairs(dieCounts [numSides + 1]uint8) bool {
+func isThreePairs(roll Roll) bool {
 	numPairs := 0
-	for _, count := range dieCounts {
+	for _, count := range roll {
 		if count == 2 {
 			numPairs++
 		}
@@ -176,10 +175,10 @@ func isThreePairs(dieCounts [numSides + 1]uint8) bool {
 	return numPairs >= 3
 }
 
-func isFourOfAKindPlusPair(dieCounts [numSides + 1]uint8) bool {
+func isFourOfAKindPlusPair(roll Roll) bool {
 	fourOfAKind := false
 	pair := false
-	for _, count := range dieCounts {
+	for _, count := range roll {
 		if count == 2 {
 			pair = true
 		}
@@ -191,9 +190,9 @@ func isFourOfAKindPlusPair(dieCounts [numSides + 1]uint8) bool {
 	return fourOfAKind && pair
 }
 
-func isTwoTriplets(dieCounts [numSides + 1]uint8) bool {
+func isTwoTriplets(roll Roll) bool {
 	numTriplets := 0
-	for _, count := range dieCounts {
+	for _, count := range roll {
 		if count == 3 {
 			numTriplets++
 		}
@@ -232,26 +231,23 @@ func potentialHolds(roll Roll) []Roll {
 	return result
 }
 
-var rollToPotentialHolds = func() map[Roll][]Roll {
-	result := make(map[Roll][]Roll)
+var rollToPotentialHolds = func() [][]Roll {
+	var result [][]Roll
 	for _, rolls := range allRolls {
 		for _, weightedRoll := range rolls {
-			result[weightedRoll.Roll] = potentialHolds(weightedRoll.Roll)
+			result = append(result, potentialHolds(weightedRoll.Roll))
 		}
 	}
 	return result
 }()
 
 // For each set of held dice, the total score.
-var heldToScore = func() map[Roll]uint8 {
-	result := make(map[Roll]uint8)
+var scoreCache = func() []uint8 {
+	result := make([]uint8, nDistinctRolls)
 	for _, holds := range rollToPotentialHolds {
 		for _, hold := range holds {
-			if _, ok := result[hold]; ok {
-				continue
-			}
-
-			result[hold] = calculateScore(hold)
+			rollID := rollToID[hold]
+			result[rollID] = calculateScore(hold)
 		}
 	}
 	return result

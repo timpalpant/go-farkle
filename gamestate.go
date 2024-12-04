@@ -39,12 +39,14 @@ func (gs GameState) String() string {
 }
 
 func (gs GameState) IsGameOver() bool {
-	return gs.PlayerScores[gs.CurrentPlayer] >= scoreToWin
+	return gs.CurrentPlayerScore() >= scoreToWin
+}
+
+func (gs GameState) CurrentPlayerScore() uint8 {
+	return gs.PlayerScores[gs.CurrentPlayer]
 }
 
 func GameStateFromBytes(buf []byte) GameState {
-	// TODO: Use an unsafe cast from 8 bytes if
-	// this is performance-limiting.
 	gs := GameState{
 		ScoreThisRound: buf[0],
 		NumDiceToRoll:  buf[1],

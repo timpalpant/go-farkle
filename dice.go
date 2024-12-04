@@ -1,17 +1,14 @@
 package farkle
 
-import (
-	"fmt"
-	"slices"
-)
+import "fmt"
 
 const maxNumDice = 6
 const numSides = 6
 
-// Roll represents an ordered roll of N dice.
+// Roll represents an unordered roll of N dice.
 // A roll can hold 1 - maxNumDice dice. Extra entries are
 // at the end of the roll with the value -1.
-type Roll [maxNumDice]uint8
+type Roll [numSides+1]uint8
 
 func NewRoll(dice ...uint8) Roll {
 	if len(dice) > maxNumDice {
@@ -19,92 +16,76 @@ func NewRoll(dice ...uint8) Roll {
 			len(dice), maxNumDice))
 	}
 
+	var roll Roll
 	for _, die := range dice {
 		if die < 1 || die > numSides {
 			panic(fmt.Errorf("cannot create Roll with die = %d", die))
 		}
+
+		roll[die]++
 	}
 
-	r := Roll{}
-	copy(r[:], dice)
-	r.Sort()
-	return r
+	return roll
 }
 
 func NewRollFromCounts(counts [numSides + 1]uint8) Roll {
-	var allDice []Roll
-	for die, count := range counts {
-		allDice = append(allDice, RepeatedRoll(uint8(die), count))
-	}
-
-	return CombineRolls(allDice...)
+	return Roll(counts)
 }
 
 func RepeatedRoll(die uint8, n uint8) Roll {
-	dice := make([]uint8, n)
-	for i := range dice {
-		dice[i] = die
-	}
-
-	return NewRoll(dice...)
+	var roll Roll
+	roll[die] = n
+	return roll
 }
 
 func CombineRolls(rolls ...Roll) Roll {
-	var allDice []uint8
+	var roll Roll
 	for _, roll := range rolls {
-		allDice = append(allDice, roll.Dice()...)
+		for die, c := range roll {
+			roll[die] += c
+		}
 	}
 
-	return NewRoll(allDice...)
+	return roll
 }
 
 func SubtractRolls(a, b Roll) Roll {
-	aCounts := a.DieCounts()
-	bCounts := b.DieCounts()
-	for die := range aCounts {
-		if bCounts[die] > aCounts[die] {
+	result := a
+	for die := range a {
+		if b[die] > a[die] {
 			panic(fmt.Errorf("cannot remove %d %ds from roll with only %d",
-				bCounts[die], die, aCounts[die]))
+				b[die], die, a[die]))
 		}
 
-		aCounts[die] -= bCounts[die]
+		result[die] -= b[die]
 	}
 
-	return NewRollFromCounts(aCounts)
-}
-
-func (r *Roll) Sort() {
-	slices.Sort(r.Dice())
+	return result
 }
 
 func (r Roll) String() string {
 	return fmt.Sprintf("%v", r.Dice())
 }
 
-// The dice in this roll, excluding unused slots.
+// The dice in this roll, sorted in ascending order.
 func (r Roll) Dice() []uint8 {
-	n := r.NumDice()
-	return r[:n]
+	result := make([]uint8, 0, r.NumDice())
+	for die, count := range r {
+		for i := uint8(0); i < count; i++ {
+			result = append(result, uint8(die))
+		}
+	}
+
+	return result
 }
 
 // The number of dice in this roll, in the range 0 - maxNumDice.
 func (r Roll) NumDice() uint8 {
 	n := uint8(0)
-	for _, die := range r {
-		if die > 0 {
-			n++
-		}
+	for _, c := range r {
+		n += c
 	}
 	return n
-}
-
-func (r Roll) DieCounts() [numSides + 1]uint8 {
-	var dieCounts [numSides + 1]uint8
-	for _, die := range r.Dice() {
-		dieCounts[die]++
-	}
-
-	return dieCounts
 }
 
 // Make all distinct permutations of N dice.
@@ -134,6 +115,7 @@ func makeRolls(nDice int) []Roll {
 // and the probability of realizing that combination.
 type WeightedRoll struct {
 	Roll
+	ID int
 	Prob float64
 }
 
@@ -142,17 +124,19 @@ func makeWeightedRolls(nDice int) []WeightedRoll {
 	rollToFreq := make(map[Roll]int)
 	totalCount := 0
 	for _, roll := range makeRolls(nDice) {
-		roll.Sort()
 		rollToFreq[roll]++
 		totalCount++
 	}
 
 	result := make([]WeightedRoll, 0, len(rollToFreq))
+	rollID := 0
 	for roll, count := range rollToFreq {
 		result = append(result, WeightedRoll{
 			Roll: roll,
+			ID: rollID,
 			Prob: float64(count) / float64(totalCount),
 		})
+		rollID++
 	}
 
 	return result
@@ -164,5 +148,43 @@ var allRolls = func() [maxNumDice + 1][]WeightedRoll {
 		result[nDice] = makeWeightedRolls(nDice)
 	}
 
+	// Renumber all rolls with a distinct, sequential ID
+	// that can be used to look up other properties.
+	nextRollID := 0
+	for _, rolls := range result {
+		for i := range rolls {
+			rolls[i].ID = nextRollID
+			nextRollID++
+		}
+	}
+
+	return result
+}()
+
+var nDistinctRolls = func() int {
+	n := 0
+	for _, rolls := range allRolls {
+		n += len(rolls)
+	}
+	return n
+}()
+
+var rollToID = func() map[Roll]int {
+	result := make(map[Roll]int, nDistinctRolls)
+	for _, rolls := range allRolls {
+		for _, wRoll := range rolls {
+			result[wRoll.Roll] = wRoll.ID
+		}
+	}
+	return result
+}()
+
+var rollNumDice = func() []uint8 {
+	result := make([]uint8, nDistinctRolls)
+	for _, rolls := range allRolls {
+		for _, wRoll := range rolls {
+			result[wRoll.ID] = wRoll.NumDice()
+		}
+	}
 	return result
 }()
