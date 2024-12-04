@@ -28,36 +28,36 @@ func NewRoll(dice ...uint8) Roll {
 	return roll
 }
 
-func NewRollFromCounts(counts [numSides + 1]uint8) Roll {
-	return Roll(counts)
-}
-
 func RepeatedRoll(die uint8, n uint8) Roll {
+	if die < 1 || die > numSides {
+		panic(fmt.Errorf("cannot create Roll with die = %d", die))
+	}
+
 	var roll Roll
 	roll[die] = n
 	return roll
 }
 
 func CombineRolls(rolls ...Roll) Roll {
-	var roll Roll
+	var result Roll
 	for _, roll := range rolls {
 		for die, c := range roll {
-			roll[die] += c
+			result[die] += c
 		}
 	}
 
-	return roll
+	return result
 }
 
 func SubtractRolls(a, b Roll) Roll {
 	result := a
-	for die := range a {
-		if b[die] > a[die] {
+	for die, count := range b {
+		if count > result[die] {
 			panic(fmt.Errorf("cannot remove %d %ds from roll with only %d",
-				b[die], die, a[die]))
+				count, die, result[die]))
 		}
 
-		result[die] -= b[die]
+		result[die] -= count
 	}
 
 	return result
@@ -91,21 +91,15 @@ func (r Roll) NumDice() uint8 {
 // Make all distinct permutations of N dice.
 func makeRolls(nDice int) []Roll {
 	if nDice <= 0 {
-		return nil
-	} else if nDice == 1 {
-		result := make([]Roll, 0, numSides)
-		for i := uint8(1); i <= numSides; i++ {
-			result = append(result, NewRoll(i))
-		}
-		return result
+		return []Roll{Roll{}}
 	}
 
 	subResult := makeRolls(nDice - 1)
 	result := make([]Roll, 0, numSides*len(subResult))
 	for _, roll := range subResult {
-		for i := uint8(1); i <= numSides; i++ {
-			roll[nDice-1] = i
-			result = append(result, roll)
+		for die := uint8(1); die <= numSides; die++ {
+			newRoll := CombineRolls(roll, NewRoll(die))
+			result = append(result, newRoll)
 		}
 	}
 	return result
@@ -130,7 +124,13 @@ func makeWeightedRolls(nDice int) []WeightedRoll {
 
 	result := make([]WeightedRoll, 0, len(rollToFreq))
 	rollID := 0
+	farkleID := 0
+	var zeroRoll Roll
 	for roll, count := range rollToFreq {
+		if roll == zeroRoll {
+			farkleID = rollID
+		}
+
 		result = append(result, WeightedRoll{
 			Roll: roll,
 			ID:   rollID,
@@ -138,6 +138,10 @@ func makeWeightedRolls(nDice int) []WeightedRoll {
 		})
 		rollID++
 	}
+
+	// Make the zero Roll have ID 0, so that the zero Action corresponds to a Farkle.
+	result[farkleID] = result[0]
+	result[0] = WeightedRoll{Prob: 1.0}
 
 	return result
 }

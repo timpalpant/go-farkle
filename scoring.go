@@ -1,5 +1,8 @@
 package farkle
 
+const numDistinctScores = 255
+const numDistinctScoreBits = 8
+
 type TrickType int
 
 const (

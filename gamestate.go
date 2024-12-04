@@ -3,14 +3,14 @@ package farkle
 import "fmt"
 
 const maxNumPlayers = 4
-const sizeOfGameState = maxNumPlayers + 8
+const sizeOfGameState = maxNumPlayers + 2
 
 const scoreToWin = 10000 / incr
 
+// State of the game. The current player is always player 0.
 type GameState struct {
 	ScoreThisRound uint8
 	NumDiceToRoll  uint8
-	CurrentPlayer  uint8
 	NumPlayers     uint8
 	PlayerScores   [maxNumPlayers]uint8
 }
@@ -33,9 +33,8 @@ func (gs GameState) String() string {
 		scores[i] = incr * int(gs.PlayerScores[i])
 	}
 	return fmt.Sprintf(
-		"CurrentPlayer=%d, NumDiceToRoll=%d, ScoreThisRound=%d, Scores: %v",
-		gs.CurrentPlayer, gs.NumDiceToRoll,
-		incr*int(gs.ScoreThisRound), scores[:gs.NumPlayers])
+		"NumDiceToRoll=%d, ScoreThisRound=%d, Scores: %v",
+		gs.NumDiceToRoll, incr*int(gs.ScoreThisRound), scores[:gs.NumPlayers])
 }
 
 func (gs GameState) IsGameOver() bool {
@@ -43,30 +42,29 @@ func (gs GameState) IsGameOver() bool {
 }
 
 func (gs GameState) CurrentPlayerScore() uint8 {
-	return gs.PlayerScores[gs.CurrentPlayer]
+	return gs.PlayerScores[0]
 }
 
 func GameStateFromBytes(buf []byte) GameState {
 	gs := GameState{
 		ScoreThisRound: buf[0],
 		NumDiceToRoll:  buf[1],
-		CurrentPlayer:  buf[2],
-		NumPlayers:     buf[3],
+		NumPlayers:     buf[2],
 	}
 
-	copy(gs.PlayerScores[:], buf[4:])
+	copy(gs.PlayerScores[:], buf[3:])
 	return gs
 }
 
 func (gs GameState) ToBytes() []byte {
-	nBytes := gs.NumPlayers + 4
+	nBytes := gs.NumPlayers + 2
 	buf := make([]byte, nBytes)
 	n := gs.SerializeTo(buf)
 	return buf[:n]
 }
 
 func (gs GameState) SerializeTo(buf []byte) int {
-	nBytes := int(gs.NumPlayers + 4)
+	nBytes := int(gs.NumPlayers + 2)
 	if len(buf) < nBytes {
 		panic(fmt.Errorf(
 			"cannot serialize GameState: "+
@@ -76,8 +74,6 @@ func (gs GameState) SerializeTo(buf []byte) int {
 
 	buf[0] = gs.ScoreThisRound
 	buf[1] = gs.NumDiceToRoll
-	buf[2] = gs.CurrentPlayer
-	buf[3] = gs.NumPlayers
-	copy(buf[4:], gs.PlayerScores[:])
+	copy(buf[2:], gs.PlayerScores[:])
 	return nBytes
 }
