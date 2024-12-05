@@ -23,7 +23,7 @@ func NewGameState(numPlayers int) GameState {
 	}
 
 	return GameState{
-		NumDiceToRoll: maxNumDice,
+		NumDiceToRoll: MaxNumDice,
 		NumPlayers:    uint8(numPlayers),
 	}
 }

@@ -12,10 +12,17 @@ type Action struct {
 	ContinueRolling bool
 }
 
-func init() {
-	if scoreCache[0] != 0 {
-		panic(fmt.Errorf("farkle should have zero score! got %d", scoreCache[0]))
+func (a Action) String() string {
+	if a.HeldDiceID == 0 && !a.ContinueRolling {
+		return "FARKLE!"
 	}
+
+	roll := rollsByID[a.HeldDiceID]
+	contStr := "Stop"
+	if a.ContinueRolling {
+		contStr = "Continue"
+	}
+	return fmt.Sprintf("{Held: %s, %s}", roll, contStr)
 }
 
 func ApplyAction(state GameState, action Action) GameState {
@@ -26,13 +33,13 @@ func ApplyAction(state GameState, action Action) GameState {
 	state.ScoreThisRound = newScore
 
 	state.NumDiceToRoll -= rollNumDice[action.HeldDiceID]
-	if state.NumDiceToRoll > maxNumDice {
+	if state.NumDiceToRoll > MaxNumDice {
 		panic(fmt.Errorf("illegal action %+v applied to state %+v: "+
 			"%d dice remain after removing %d",
 			action, state, state.NumDiceToRoll, rollNumDice[action.HeldDiceID]))
 	}
 	if state.NumDiceToRoll == 0 {
-		state.NumDiceToRoll = maxNumDice
+		state.NumDiceToRoll = MaxNumDice
 	}
 
 	if !action.ContinueRolling {
@@ -47,10 +54,39 @@ func ApplyAction(state GameState, action Action) GameState {
 		}
 		state.PlayerScores[state.NumPlayers-1] = newScore
 		state.ScoreThisRound = 0
-		state.NumDiceToRoll = maxNumDice
+		state.NumDiceToRoll = MaxNumDice
 	}
 
 	return state
+}
+
+func SelectAction(state GameState, roll Roll, db DB) Action {
+	var bestWinProb float64 = -1.0
+	var bestAction Action
+	rollID := rollToID[roll]
+	for _, action := range rollIDToPotentialActions[rollID] {
+		if state.CurrentPlayerScore() == 0 && state.ScoreThisRound < 500/incr && !action.ContinueRolling {
+			continue // Must get at least 500 to get on the board.
+		} else if state.ScoreThisRound == math.MaxUint8 && action.ContinueRolling {
+			// Overflowed score this round. Our assumption is that this is unlikely.
+			// Approximate the solution using the probability as if they stopped.
+			action.ContinueRolling = false
+		}
+
+		newState := ApplyAction(state, action)
+		pSubtree := CalculateWinProb(newState, db)
+		if !action.ContinueRolling {
+			// Probabilities are rotated since we advanced to the
+			// next player in next state.
+			pSubtree = unrotate(pSubtree, state.NumPlayers)
+		}
+		if pSubtree[0] > bestWinProb {
+			bestWinProb = pSubtree[0]
+			bestAction = action
+		}
+	}
+
+	return bestAction
 }
 
 var rollIDToPotentialActions = func() [][]Action {
@@ -72,12 +108,16 @@ var rollIDToPotentialActions = func() [][]Action {
 	return result
 }()
 
-var farkleProbs = func() [maxNumDice + 1]float64 {
-	var pFarkle [maxNumDice + 1]float64
-	for numDice := 1; numDice <= maxNumDice; numDice++ {
+func IsFarkle(roll Roll) bool {
+	rollID := rollToID[roll]
+	return len(rollIDToPotentialActions[rollID]) == 0
+}
+
+var farkleProbs = func() [MaxNumDice + 1]float64 {
+	var pFarkle [MaxNumDice + 1]float64
+	for numDice := 1; numDice <= MaxNumDice; numDice++ {
 		for _, wRoll := range allRolls[numDice] {
-			potentialActions := rollIDToPotentialActions[wRoll.ID]
-			if len(potentialActions) == 0 { // Farkle!
+			if IsFarkle(wRoll.Roll) {
 				pFarkle[numDice] += wRoll.Prob
 			}
 		}
@@ -111,21 +151,26 @@ func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
 		return pWin
 	}
 
+	notYetOnBoard := state.CurrentPlayerScore() == 0
+
 	var pWin [maxNumPlayers]float64
 	for _, wRoll := range allRolls[state.NumDiceToRoll] {
 		// Find the action that maximize current player win probability.
 		var bestSubtreeProb [maxNumPlayers]float64
 		potentialActions := rollIDToPotentialActions[wRoll.ID]
 		for _, action := range potentialActions {
-			if state.CurrentPlayerScore() == 0 && state.ScoreThisRound < 500/incr && !action.ContinueRolling {
-				continue // Must get at least 500 to get on the board.
-			} else if state.ScoreThisRound == math.MaxUint8 && action.ContinueRolling {
+			if state.ScoreThisRound == math.MaxUint8 && action.ContinueRolling {
 				// Overflowed score this round. Our assumption is that this is unlikely.
 				// Approximate the solution using the probability as if they stopped.
 				action.ContinueRolling = false
 			}
 
 			newState := ApplyAction(state, action)
+			if notYetOnBoard && !action.ContinueRolling && newState.PlayerScores[state.NumPlayers-1] < 500/incr {
+				// Not a valid state: You must get at least 500 to get on the board.
+				continue
+			}
+
 			pSubtree := CalculateWinProb(newState, db)
 			if !action.ContinueRolling {
 				// Probabilities are rotated since we advanced to the
@@ -180,4 +225,10 @@ func unrotate(pWin [maxNumPlayers]float64, numPlayers uint8) [maxNumPlayers]floa
 		result[i] = pWin[i-1]
 	}
 	return result
+}
+
+func init() {
+	if scoreCache[0] != 0 {
+		panic(fmt.Errorf("farkle should have zero score! got %d", scoreCache[0]))
+	}
 }

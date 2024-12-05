@@ -1,8 +1,11 @@
 package farkle
 
-import "fmt"
+import (
+	"fmt"
+	"math/rand"
+)
 
-const maxNumDice = 6
+const MaxNumDice = 6
 const numSides = 6
 
 // Roll represents an unordered roll of N dice.
@@ -11,9 +14,9 @@ const numSides = 6
 type Roll [numSides + 1]uint8
 
 func NewRoll(dice ...uint8) Roll {
-	if len(dice) > maxNumDice {
+	if len(dice) > MaxNumDice {
 		panic(fmt.Errorf("cannot create Roll with %d > max %d dice",
-			len(dice), maxNumDice))
+			len(dice), MaxNumDice))
 	}
 
 	var roll Roll
@@ -25,6 +28,15 @@ func NewRoll(dice ...uint8) Roll {
 		roll[die]++
 	}
 
+	return roll
+}
+
+func NewRandomRoll(numDice int) Roll {
+	var roll Roll
+	for i := 0; i < numDice; i++ {
+		die := 1 + rand.Intn(numSides)
+		roll[die]++
+	}
 	return roll
 }
 
@@ -137,9 +149,9 @@ func makeWeightedRolls(nDice int) []WeightedRoll {
 }
 
 // All possible distinct rolls of N dice.
-var allRolls = func() [maxNumDice + 1][]WeightedRoll {
-	var result [maxNumDice + 1][]WeightedRoll
-	for nDice := 0; nDice <= maxNumDice; nDice++ {
+var allRolls = func() [MaxNumDice + 1][]WeightedRoll {
+	var result [MaxNumDice + 1][]WeightedRoll
+	for nDice := 0; nDice <= MaxNumDice; nDice++ {
 		result[nDice] = makeWeightedRolls(nDice)
 	}
 
@@ -176,6 +188,20 @@ var rollToID = func() map[Roll]int {
 	}
 	return result
 }()
+
+var rollsByID = func() []Roll {
+	result := make([]Roll, nDistinctRolls)
+	for _, rolls := range allRolls {
+		for _, wRoll := range rolls {
+			result[wRoll.ID] = wRoll.Roll
+		}
+	}
+	return result
+}()
+
+func GetRollID(roll Roll) int {
+	return rollToID[roll]
+}
 
 // Lookup of the number of dice for each roll ID.
 var rollNumDice = func() []uint8 {

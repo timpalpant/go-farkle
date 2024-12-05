@@ -61,7 +61,7 @@ func LoadInMemoryDB(r io.Reader) (*InMemoryDB, error) {
 }
 
 func calcNumDistinctStates(numPlayers int) int {
-	return maxNumDice << ((numPlayers + 1) * numDistinctScoreBits)
+	return MaxNumDice << ((numPlayers + 1) * numDistinctScoreBits)
 }
 
 func (db *InMemoryDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
@@ -81,8 +81,8 @@ func (db *InMemoryDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
 		hitRate := float64(db.nHits) / float64(db.nHits+db.nMisses)
 		glog.Infof(
 			"Database has %d entries (%.1f%% complete). "+
-			"Hit rate: %d hits, %d misses (%.1f%%). "+
-			"Last put: %s -> %v",
+				"Hit rate: %d hits, %d misses (%.1f%%). "+
+				"Last put: %s -> %v",
 			db.nPuts, 100*pctComplete,
 			db.nHits, db.nMisses, 100*hitRate,
 			gs, pWin[:gs.NumPlayers])
@@ -128,7 +128,7 @@ type PebbleDB struct {
 	db *pebble.DB
 }
 
-func NewDB(dirName string, cacheSizeBytes int64) (*PebbleDB, error) {
+func NewPebbleDB(dirName string, cacheSizeBytes int64) (*PebbleDB, error) {
 	cache := pebble.NewCache(cacheSizeBytes)
 	defer cache.Unref()
 	db, err := pebble.Open(dirName, &pebble.Options{

@@ -67,7 +67,7 @@ func (t Trick) Score() uint8 {
 }
 
 func remainingTricks(roll Roll, trick Trick) [][]Trick {
-	result := [][]Trick{[]Trick{trick}}
+	result := [][]Trick{{trick}}
 	remainingDice := SubtractRolls(roll, trick.Dice)
 	for _, addlTricks := range enumeratePossibleTricks(remainingDice) {
 		result = append(result, append([]Trick{trick}, addlTricks...))
@@ -204,7 +204,7 @@ func isTwoTriplets(roll Roll) bool {
 	return numTriplets >= 2
 }
 
-func calculateScore(held Roll) uint8 {
+func CalculateScore(held Roll) uint8 {
 	result := uint8(0)
 	for _, tricks := range enumeratePossibleTricks(held) {
 		score := uint8(0)
@@ -250,7 +250,7 @@ var scoreCache = func() []uint8 {
 	for _, holds := range rollToPotentialHolds {
 		for _, hold := range holds {
 			rollID := rollToID[hold]
-			result[rollID] = calculateScore(hold)
+			result[rollID] = CalculateScore(hold)
 		}
 	}
 	return result
