@@ -67,17 +67,30 @@ func calcNumDistinctStates(numPlayers int) int {
 func (db *InMemoryDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
 	idx := db.calcOffset(gs)
 	copy(db.table[idx:], pWin[:gs.NumPlayers])
-	db.nPuts++
+	nonZero := false
+	for i := uint8(0); i < gs.NumPlayers; i++ {
+		if pWin[i] > 0 {
+			db.nPuts++
+			nonZero = true
+			break
+		}
+	}
+
+	if nonZero && db.nPuts%100000 == 0 {
+		pctComplete := float64(db.nPuts) / float64(len(db.table)/int(gs.NumPlayers))
+		hitRate := float64(db.nHits) / float64(db.nHits+db.nMisses)
+		glog.Infof(
+			"Database has %d entries (%.1f%% complete). "+
+			"Hit rate: %d hits, %d misses (%.1f%%). "+
+			"Last put: %s -> %v",
+			db.nPuts, 100*pctComplete,
+			db.nHits, db.nMisses, 100*hitRate,
+			gs, pWin[:gs.NumPlayers])
+	}
+
 }
 
 func (db *InMemoryDB) Get(gs GameState) ([maxNumPlayers]float64, bool) {
-	if (db.nHits+db.nMisses)%10000000 == 0 {
-		pctComplete := float64(db.nPuts) / float64(len(db.table)/int(gs.NumPlayers))
-		hitRate := float64(db.nHits) / float64(db.nHits+db.nMisses)
-		glog.Infof("Database has %d entries (%.1f%% complete). Hit rate: %d hits, %d misses (%.1f%%)",
-			db.nPuts, 100*pctComplete, db.nHits, db.nMisses, 100*hitRate)
-	}
-
 	idx := db.calcOffset(gs)
 	var result [maxNumPlayers]float64
 	if math.IsNaN(db.table[idx]) {

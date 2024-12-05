@@ -88,7 +88,7 @@ var farkleProbs = func() [maxNumDice + 1]float64 {
 // Recursive implementation that forward propagates all possible actions from the current
 // game state and stores results in `db`.
 func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
-	if state.IsGameOver() || state.ScoreThisRound == math.MaxUint8 {
+	if state.IsGameOver() {
 		winningScore := state.HighestScore()
 		winners := make([]int, 0, maxNumPlayers)
 		for player, score := range state.PlayerScores {
@@ -119,10 +119,19 @@ func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
 		for _, action := range potentialActions {
 			if state.CurrentPlayerScore() == 0 && state.ScoreThisRound < 500/incr && !action.ContinueRolling {
 				continue // Must get at least 500 to get on the board.
+			} else if state.ScoreThisRound == math.MaxUint8 && action.ContinueRolling {
+				// Overflowed score this round. Our assumption is that this is unlikely.
+				// Approximate the solution using the probability as if they stopped.
+				action.ContinueRolling = false
 			}
 
 			newState := ApplyAction(state, action)
 			pSubtree := CalculateWinProb(newState, db)
+			if !action.ContinueRolling {
+				// Probabilities are rotated since we advanced to the
+				// next player in next state.
+				pSubtree = unrotate(pSubtree, state.NumPlayers)
+			}
 			if pSubtree[0] > bestSubtreeProb[0] {
 				bestSubtreeProb = pSubtree
 			}
@@ -146,7 +155,7 @@ func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
 	db.Put(state, [maxNumPlayers]float64{})
 
 	newState := ApplyAction(state, Action{})
-	pSubtree := CalculateWinProb(newState, db)
+	pSubtree := unrotate(CalculateWinProb(newState, db), state.NumPlayers)
 	for i := uint8(0); i < state.NumPlayers; i++ {
 		pWin[i] += farkleProbs[state.NumDiceToRoll] * pSubtree[i]
 	}
@@ -162,4 +171,13 @@ func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
 
 	db.Put(state, pWin)
 	return pWin
+}
+
+func unrotate(pWin [maxNumPlayers]float64, numPlayers uint8) [maxNumPlayers]float64 {
+	var result [maxNumPlayers]float64
+	result[0] = pWin[numPlayers-1]
+	for i := uint8(1); i < numPlayers; i++ {
+		result[i] = pWin[i-1]
+	}
+	return result
 }
