@@ -60,33 +60,36 @@ func ApplyAction(state GameState, action Action) GameState {
 	return state
 }
 
-func SelectAction(state GameState, roll Roll, db DB) Action {
-	var bestWinProb float64 = -1.0
+func SelectAction(state GameState, rollID int, db DB) (Action, [maxNumPlayers]float64) {
+	var bestWinProb [maxNumPlayers]float64
 	var bestAction Action
-	rollID := rollToID[roll]
+	notYetOnBoard := state.CurrentPlayerScore() == 0
 	for _, action := range rollIDToPotentialActions[rollID] {
-		if state.CurrentPlayerScore() == 0 && state.ScoreThisRound < 500/incr && !action.ContinueRolling {
-			continue // Must get at least 500 to get on the board.
-		} else if state.ScoreThisRound == math.MaxUint8 && action.ContinueRolling {
+		if state.ScoreThisRound == math.MaxUint8 && action.ContinueRolling {
 			// Overflowed score this round. Our assumption is that this is unlikely.
 			// Approximate the solution using the probability as if they stopped.
 			action.ContinueRolling = false
 		}
 
 		newState := ApplyAction(state, action)
+		if notYetOnBoard && !action.ContinueRolling && newState.PlayerScores[state.NumPlayers-1] < 500/incr {
+			// Not a valid state: You must get at least 500 to get on the board.
+			continue
+		}
+
 		pSubtree := CalculateWinProb(newState, db)
 		if !action.ContinueRolling {
 			// Probabilities are rotated since we advanced to the
 			// next player in next state.
 			pSubtree = unrotate(pSubtree, state.NumPlayers)
 		}
-		if pSubtree[0] > bestWinProb {
-			bestWinProb = pSubtree[0]
+		if pSubtree[0] > bestWinProb[0] {
+			bestWinProb = pSubtree
 			bestAction = action
 		}
 	}
 
-	return bestAction
+	return bestAction, bestWinProb
 }
 
 var rollIDToPotentialActions = func() [][]Action {
@@ -131,7 +134,7 @@ func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
 	if state.IsGameOver() {
 		winningScore := state.HighestScore()
 		winners := make([]int, 0, maxNumPlayers)
-		for player, score := range state.PlayerScores {
+		for player, score := range state.PlayerScores[:state.NumPlayers] {
 			if score >= winningScore {
 				winners = append(winners, player)
 			}
@@ -151,39 +154,12 @@ func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
 		return pWin
 	}
 
-	notYetOnBoard := state.CurrentPlayerScore() == 0
-
 	var pWin [maxNumPlayers]float64
 	for _, wRoll := range allRolls[state.NumDiceToRoll] {
 		// Find the action that maximize current player win probability.
-		var bestSubtreeProb [maxNumPlayers]float64
-		potentialActions := rollIDToPotentialActions[wRoll.ID]
-		for _, action := range potentialActions {
-			if state.ScoreThisRound == math.MaxUint8 && action.ContinueRolling {
-				// Overflowed score this round. Our assumption is that this is unlikely.
-				// Approximate the solution using the probability as if they stopped.
-				action.ContinueRolling = false
-			}
-
-			newState := ApplyAction(state, action)
-			if notYetOnBoard && !action.ContinueRolling && newState.PlayerScores[state.NumPlayers-1] < 500/incr {
-				// Not a valid state: You must get at least 500 to get on the board.
-				continue
-			}
-
-			pSubtree := CalculateWinProb(newState, db)
-			if !action.ContinueRolling {
-				// Probabilities are rotated since we advanced to the
-				// next player in next state.
-				pSubtree = unrotate(pSubtree, state.NumPlayers)
-			}
-			if pSubtree[0] > bestSubtreeProb[0] {
-				bestSubtreeProb = pSubtree
-			}
-		}
-
+		_, pSubgame := SelectAction(state, wRoll.ID, db)
 		for i := uint8(0); i < state.NumPlayers; i++ {
-			pWin[i] += wRoll.Prob * bestSubtreeProb[i]
+			pWin[i] += wRoll.Prob * pSubgame[i]
 		}
 	}
 

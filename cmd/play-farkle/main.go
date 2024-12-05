@@ -58,6 +58,7 @@ func playGame(db farkle.DB, numPlayers int) {
 	for {
 		roll := farkle.NewRandomRoll(farkle.MaxNumDice)
 		fmt.Printf("Rolled: %s\n", roll)
+		rollID := farkle.GetRollID(roll)
 
 		var action farkle.Action
 		if farkle.IsFarkle(roll) {
@@ -70,16 +71,14 @@ func playGame(db farkle.DB, numPlayers int) {
 				continueRolling = promptUserToContinue()
 			}
 			action = farkle.Action{
-				HeldDiceID:      farkle.GetRollID(held),
+				HeldDiceID:      rollID,
 				ContinueRolling: continueRolling,
 			}
 
-			optAction := farkle.SelectAction(state, roll, db)
+			optAction, pWinOpt := farkle.SelectAction(state, rollID, db)
 			if action == optAction {
 				fmt.Println("...selected action is optimal!")
 			} else {
-				optState := farkle.ApplyAction(state, optAction)
-				pWinOpt := farkle.CalculateWinProb(optState, db)
 				pOpt := pWinOpt[0]
 				if !optAction.ContinueRolling {
 					pOpt = pWinOpt[numPlayers-1]
@@ -96,7 +95,7 @@ func playGame(db farkle.DB, numPlayers int) {
 					100*pAction, 100*(pAction-pOpt))
 			}
 		} else { // CP
-			action = farkle.SelectAction(state, roll, db)
+			action, _ = farkle.SelectAction(state, rollID, db)
 			fmt.Printf("...selected action: %s\n", action)
 		}
 

@@ -200,7 +200,11 @@ var rollsByID = func() []Roll {
 }()
 
 func GetRollID(roll Roll) int {
-	return rollToID[roll]
+	id, ok := rollToID[roll]
+	if !ok {
+		panic(fmt.Errorf("no roll ID for: %v", roll))
+	}
+	return id
 }
 
 // Lookup of the number of dice for each roll ID.
