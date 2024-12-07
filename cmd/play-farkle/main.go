@@ -53,22 +53,22 @@ func main() {
 
 func playGame(db farkle.DB, numPlayers int) {
 	state := farkle.NewGameState(numPlayers)
-	playerID := 0
+	humanPlayerID := 0
 
 	for {
 		roll := farkle.NewRandomRoll(int(state.NumDiceToRoll))
-		fmt.Printf("Rolled: %s\n", roll)
+		fmt.Printf("Player %d rolled: %s\n", humanPlayerID, roll)
 		rollID := farkle.GetRollID(roll)
 
 		var action farkle.Action
 		if farkle.IsFarkle(roll) {
 			fmt.Println("...farkle!")
-		} else if playerID == 0 {
+		} else if humanPlayerID == 0 {
 			held := promptUserForDiceToKeep(roll)
 			score := state.ScoreThisRound + farkle.CalculateScore(held)
 			continueRolling := true
 			if state.CurrentPlayerScore() > 0 || score >= 500/50 {
-				fmt.Printf("...score this round = %d", score*50)
+				fmt.Printf("...score this round = %d\n", int(score)*50)
 				continueRolling = promptUserToContinue()
 			}
 			action = farkle.Action{
@@ -97,15 +97,25 @@ func playGame(db farkle.DB, numPlayers int) {
 			}
 		} else { // CP
 			action, _ = farkle.SelectAction(state, rollID, db)
-			fmt.Printf("...selected action: %s\n", action)
+			fmt.Printf("...selected action %s\n", action)
 		}
 
 		state = farkle.ApplyAction(state, action)
 		if !action.ContinueRolling {
-			fmt.Printf("Current scores: %v\n\n", state.PlayerScores)
-			playerID--
-			if playerID < 0 {
-				playerID = numPlayers - 1
+			playerScore := int(state.PlayerScores[humanPlayerID]) * 50
+			otherScores := make([]int, 0, state.NumPlayers-1)
+			for player, score := range state.PlayerScores[:state.NumPlayers] {
+				if player == humanPlayerID {
+					continue
+				}
+
+				otherScores = append(otherScores, 50*int(score))
+			}
+			fmt.Printf("Current scores: player = %d, others: %v\n\n",
+				playerScore, otherScores)
+			humanPlayerID--
+			if humanPlayerID < 0 {
+				humanPlayerID = numPlayers - 1
 			}
 		}
 	}

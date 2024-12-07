@@ -76,7 +76,7 @@ func (db *InMemoryDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
 		}
 	}
 
-	if nonZero && db.nPuts%1000 == 0 {
+	if nonZero && db.nPuts%100000 == 0 {
 		pctComplete := float64(db.nPuts) / float64(len(db.table)/int(gs.NumPlayers))
 		glog.Infof(
 			"Database has %d entries (%.1f%% complete). "+
