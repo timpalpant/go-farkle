@@ -49,6 +49,9 @@ func NewFileDB(path string, numPlayers int) (*FileDB, error) {
 		nanBits := make([]byte, 8)
 		binary.LittleEndian.PutUint64(nanBits, math.Float64bits(math.NaN()))
 		for i := 0; i < numEntries; i++ {
+			if i % 1000000000 == 0 {
+				glog.Infof("...%d", i)
+			}
 			w.Write(nanBits)
 		}
 		if err := w.Flush(); err != nil {
@@ -117,13 +120,14 @@ func (db *FileDB) Get(gs GameState) ([maxNumPlayers]float64, bool) {
 func (db *FileDB) Close() error {
 	defer db.f.Close()
 
-	// FileDB is already on disk.
+	if err := db.mmap.Flush(); err != nil {
+		return err
+	}
 	if err := db.mmap.Unmap(); err != nil {
 		return err
 	}
 
-	err := db.f.Close()
-	return err
+	return db.f.Close()
 }
 
 func calcNumDistinctStates(numPlayers int) int {

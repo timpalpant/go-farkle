@@ -11,8 +11,6 @@ import (
 	"github.com/timpalpant/go-farkle"
 )
 
-const gb = 1024 * 1024 * 1024
-
 type Params struct {
 	NumPlayers int
 	DBPath     string
@@ -37,7 +35,7 @@ func playGame(db farkle.DB, numPlayers int) {
 	state := farkle.NewGameState(numPlayers)
 	humanPlayerID := 0
 
-	for {
+	for !state.IsGameOver() {
 		roll := farkle.NewRandomRoll(int(state.NumDiceToRoll))
 		fmt.Printf("Player %d rolled: %s\n", humanPlayerID, roll)
 		rollID := farkle.GetRollID(roll)
@@ -84,6 +82,10 @@ func playGame(db farkle.DB, numPlayers int) {
 
 		state = farkle.ApplyAction(state, action)
 		if !action.ContinueRolling {
+			humanPlayerID--
+			if humanPlayerID < 0 {
+				humanPlayerID = numPlayers - 1
+			}
 			playerScore := int(state.PlayerScores[humanPlayerID]) * 50
 			otherScores := make([]int, 0, state.NumPlayers-1)
 			for player, score := range state.PlayerScores[:state.NumPlayers] {
@@ -95,11 +97,13 @@ func playGame(db farkle.DB, numPlayers int) {
 			}
 			fmt.Printf("Current scores: player = %d, others: %v\n\n",
 				playerScore, otherScores)
-			humanPlayerID--
-			if humanPlayerID < 0 {
-				humanPlayerID = numPlayers - 1
-			}
 		}
+	}
+
+	if state.PlayerScores[humanPlayerID] == state.HighestScore() {
+		fmt.Println("You win!")
+	} else {
+		fmt.Println("You lose!")
 	}
 }
 
