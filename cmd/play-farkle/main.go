@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
-	"net/http"
-	_ "net/http/pprof"
 	"os"
 	"strings"
 
@@ -18,31 +16,15 @@ const gb = 1024 * 1024 * 1024
 type Params struct {
 	NumPlayers int
 	DBPath     string
-	CacheGB    int64
 }
 
 func main() {
 	var params Params
 	flag.IntVar(&params.NumPlayers, "num_players", 2, "Number of players")
 	flag.StringVar(&params.DBPath, "db", "2player.db", "Path to solution database")
-	flag.Int64Var(&params.CacheGB, "cache_gb", 8, "Databse cache size, if using RocksDB")
 	flag.Parse()
 
-	go http.ListenAndServe(":6069", nil)
-
-	stat, err := os.Stat(params.DBPath)
-	if err != nil {
-		glog.Errorf("Unable to open database: %v", err)
-		os.Exit(1)
-	}
-
-	var db farkle.DB
-	if stat.IsDir() {
-		db, err = farkle.NewPebbleDB(params.DBPath, params.CacheGB*gb)
-	} else {
-		db, err = loadDB(params.DBPath)
-	}
-
+	db, err := farkle.NewFileDB(params.DBPath, params.NumPlayers)
 	if err != nil {
 		glog.Errorf("Unable to initialize database: %v", err)
 		os.Exit(1)
@@ -202,14 +184,4 @@ func parseHeld(toKeepStr string) (farkle.Roll, error) {
 	}
 
 	return held, nil
-}
-
-func loadDB(dbPath string) (*farkle.InMemoryDB, error) {
-	f, err := os.Open(dbPath)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	r := bufio.NewReaderSize(f, 4*1024*1024)
-	return farkle.LoadInMemoryDB(r)
 }

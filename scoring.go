@@ -1,6 +1,6 @@
 package farkle
 
-const numDistinctScoreBits = 8
+const numScoreBits = 8
 const incr = 50
 const scoreToWin = 10000 / incr
 

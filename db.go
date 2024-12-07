@@ -1,12 +1,15 @@
 package farkle
 
 import (
+	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math"
+	"os"
 
-	"github.com/cockroachdb/pebble"
+	"github.com/edsrzf/mmap-go"
 	"github.com/golang/glog"
 )
 
@@ -17,163 +20,125 @@ type DB interface {
 	// Returns the result (if found), and a bool indicating whether or not it was found.
 	Get(state GameState) ([maxNumPlayers]float64, bool)
 	// Serialize the database to the given io.Writer.
-	WriteTo(io.Writer) error
+	WriteTo(io.Writer) (int64, error)
 }
 
-type InMemoryDB struct {
-	// A slab of the pWin for all possible game states in a game of numPlayers.
-	// The slab is indexed with the following dimensions:
-	//   - 0: Number of dice to roll
-	//   - 1: Current player score this round
-	//   - 2: Current total score of player 0
-	//   - 3: Current total score of player 1
-	//   - N+2: Current total score of player N
-	table      []float64
+// DB that stores results in a memory-mapped flat file.
+type FileDB struct {
+	f          *os.File
+	mmap       mmap.MMap
 	numPlayers int
 
 	nPuts int
 }
 
-func NewInMemoryDB(numPlayers int) *InMemoryDB {
+func NewFileDB(path string, numPlayers int) (*FileDB, error) {
 	numStates := calcNumDistinctStates(numPlayers)
 	numEntries := numPlayers * numStates
-	table := make([]float64, numEntries)
-	for i := range table {
-		table[i] = math.NaN()
-	}
+	fileSize := int64(8 * numEntries)
 
-	return &InMemoryDB{
-		table:      table,
-		numPlayers: numPlayers,
-	}
-}
-
-func LoadInMemoryDB(r io.Reader) (*InMemoryDB, error) {
-	var numPlayers int64
-	err := binary.Read(r, binary.LittleEndian, &numPlayers)
-	if err != nil {
+	var f *os.File
+	stat, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		// Initialize a new empty database with all NaN values.
+		f, err = os.Create(path)
+		if err != nil {
+			return nil, err
+		}
+		glog.Infof("Initializing new database at %s with %d entries", path, numEntries)
+		w := bufio.NewWriterSize(f, 4*1024*1024)
+		nanBits := make([]byte, 8)
+		binary.LittleEndian.PutUint64(nanBits, math.Float64bits(math.NaN()))
+		for i := 0; i < numEntries; i++ {
+			w.Write(nanBits)
+		}
+		if err := w.Flush(); err != nil {
+			return nil, err
+		}
+	} else if err != nil {
 		return nil, err
-	}
-
-	db := NewInMemoryDB(int(numPlayers))
-	binary.Read(r, binary.LittleEndian, &db.table)
-	return db, nil
-}
-
-func calcNumDistinctStates(numPlayers int) int {
-	return MaxNumDice << ((numPlayers + 1) * numDistinctScoreBits)
-}
-
-func (db *InMemoryDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
-	idx := db.calcOffset(gs)
-	copy(db.table[idx:], pWin[:gs.NumPlayers])
-	nonZero := false
-	for _, p := range pWin[:gs.NumPlayers] {
-		if p > 0 {
-			db.nPuts++
-			nonZero = true
-			break
+	} else if stat.Size() != fileSize {
+		return nil, fmt.Errorf(
+			"%s is not the correct size for %d-player database: "+
+				"got %d, expected %d", path, numPlayers, stat.Size(), fileSize)
+	} else {
+		f, err = os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0755)
+		if err != nil {
+			return nil, err
 		}
 	}
 
-	if nonZero && db.nPuts%100000 == 0 {
-		pctComplete := float64(db.nPuts) / float64(len(db.table)/int(gs.NumPlayers))
-		glog.Infof(
-			"Database has %d entries (%.1f%% complete). "+
-				"Last put: %s -> %v",
-			db.nPuts, 100*pctComplete,
-			gs, pWin[:gs.NumPlayers])
-	}
-
-}
-
-func (db *InMemoryDB) Get(gs GameState) ([maxNumPlayers]float64, bool) {
-	idx := db.calcOffset(gs)
-	var result [maxNumPlayers]float64
-	if math.IsNaN(db.table[idx]) {
-		return result, false
-	}
-
-	copy(result[:], db.table[idx:idx+int(gs.NumPlayers)])
-	return result, true
-}
-
-func (db *InMemoryDB) WriteTo(w io.Writer) error {
-	if err := binary.Write(w, binary.LittleEndian, int64(db.numPlayers)); err != nil {
-		return err
-	}
-
-	return binary.Write(w, binary.LittleEndian, db.table)
-}
-
-func (db *InMemoryDB) calcOffset(gs GameState) int {
-	// First dimension is number of dice to roll.
-	idx := int(gs.NumDiceToRoll) << ((gs.NumPlayers + 1) * numDistinctScoreBits)
-	// Second dimension is current player score this round.
-	idx += int(gs.ScoreThisRound) << (gs.NumPlayers * numDistinctScoreBits)
-	// Remaining dimesions are player scores.
-	for i := uint8(0); i < gs.NumPlayers; i++ {
-		idx += int(gs.PlayerScores[i]) << (i * numDistinctScoreBits)
-	}
-	return idx
-}
-
-// DB that stores results in a Pebble (RocksDB) database.
-type PebbleDB struct {
-	db *pebble.DB
-}
-
-func NewPebbleDB(dirName string, cacheSizeBytes int64) (*PebbleDB, error) {
-	cache := pebble.NewCache(cacheSizeBytes)
-	defer cache.Unref()
-	db, err := pebble.Open(dirName, &pebble.Options{
-		BytesPerSync: 10 * 1024 * 1024,
-		Cache:        cache,
-	})
+	mmap, err := mmap.Map(f, mmap.RDWR, 0)
 	if err != nil {
+		_ = f.Close()
 		return nil, err
 	}
 
-	return &PebbleDB{
-		db: db,
+	return &FileDB{
+		f:          f,
+		mmap:       mmap,
+		numPlayers: numPlayers,
 	}, nil
 }
 
-func (db *PebbleDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
-	key := make([]byte, sizeOfGameState)
-	n := gs.SerializeTo(key)
-	key = key[:n]
-
-	value := make([]byte, 8*gs.NumPlayers)
+func (db *FileDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
+	idx := 8 * calcOffset(gs)
+	buf := db.mmap[idx : idx+8*db.numPlayers]
+	nonZero := false
 	for i, p := range pWin[:gs.NumPlayers] {
-		buf := value[8*i : 8*(i+1)]
-		binary.LittleEndian.PutUint64(buf, math.Float64bits(p))
+		nonZero = nonZero || (p > 0)
+		value := math.Float64bits(p)
+		binary.LittleEndian.PutUint64(buf[8*i:8*(i+1)], value)
 	}
 
-	db.db.Set(key, value, &pebble.WriteOptions{})
+	if nonZero {
+		db.nPuts++
+	}
+
+	if nonZero && db.nPuts%100000 == 0 {
+		glog.Infof(
+			"Database has %d entries. Last put: %s -> %v",
+			db.nPuts, gs, pWin[:gs.NumPlayers])
+	}
 }
 
-func (db *PebbleDB) Get(gs GameState) ([maxNumPlayers]float64, bool) {
-	key := make([]byte, sizeOfGameState)
-	n := gs.SerializeTo(key)
-	key = key[:n]
+func (db *FileDB) Get(gs GameState) ([maxNumPlayers]float64, bool) {
+	idx := 8 * calcOffset(gs)
+	buf := db.mmap[idx : idx+8*db.numPlayers]
 
-	value, closer, err := db.db.Get(key)
-	if err == pebble.ErrNotFound {
-		return [maxNumPlayers]float64{}, false
-	} else if err != nil {
-		panic(fmt.Errorf("unable to get score from DB: %w", err))
+	var result [maxNumPlayers]float64
+	for i := 0; i < db.numPlayers; i++ {
+		value := binary.LittleEndian.Uint64(buf[8*i : 8*(i+1)])
+		result[i] = math.Float64frombits(value)
 	}
-	defer closer.Close()
 
-	var pWin [maxNumPlayers]float64
-	for i := 0; i < len(value); i += 8 {
-		buf := value[i : i+8]
-		pWin[i/8] = math.Float64frombits(binary.LittleEndian.Uint64(buf))
-	}
-	return pWin, true
+	return result, !math.IsNaN(result[0])
 }
 
-func (db *PebbleDB) WriteTo(w io.Writer) error {
-	return nil // PebbleDB is already on disk.
+func (db *FileDB) WriteTo(w io.Writer) (int64, error) {
+	defer db.f.Close()
+
+	// FileDB is already on disk.
+	if err := db.mmap.Unmap(); err != nil {
+		return 0, err
+	}
+
+	err := db.f.Close()
+	return 0, err
+}
+
+func calcNumDistinctStates(numPlayers int) int {
+	return MaxNumDice << ((numPlayers + 1) * numScoreBits)
+}
+
+func calcOffset(gs GameState) int {
+	// First dimension is number of dice to roll.
+	idx := int(gs.NumDiceToRoll-1) << ((gs.NumPlayers + 1) * numScoreBits)
+	// Second dimension is current player score this round.
+	idx += int(gs.ScoreThisRound) << (gs.NumPlayers * numScoreBits)
+	// Remaining dimensions are player scores.
+	for i, score := range gs.PlayerScores[:gs.NumPlayers] {
+		idx += int(score) << (i * numScoreBits)
+	}
+	return int(gs.NumPlayers) * idx
 }

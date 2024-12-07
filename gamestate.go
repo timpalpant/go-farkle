@@ -80,36 +80,3 @@ func (gs GameState) HighestScore() uint8 {
 	}
 	return bestScore
 }
-
-func GameStateFromBytes(buf []byte) GameState {
-	gs := GameState{
-		ScoreThisRound: buf[0],
-		NumDiceToRoll:  buf[1],
-		NumPlayers:     buf[2],
-	}
-
-	copy(gs.PlayerScores[:], buf[3:])
-	return gs
-}
-
-func (gs GameState) ToBytes() []byte {
-	nBytes := gs.NumPlayers + 2
-	buf := make([]byte, nBytes)
-	n := gs.SerializeTo(buf)
-	return buf[:n]
-}
-
-func (gs GameState) SerializeTo(buf []byte) int {
-	nBytes := int(gs.NumPlayers + 2)
-	if len(buf) < nBytes {
-		panic(fmt.Errorf(
-			"cannot serialize GameState: "+
-				"buffer has %d bytes but need %d",
-			len(buf), nBytes))
-	}
-
-	buf[0] = gs.ScoreThisRound
-	buf[1] = gs.NumDiceToRoll
-	copy(buf[2:], gs.PlayerScores[:])
-	return nBytes
-}
