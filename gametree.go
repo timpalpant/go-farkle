@@ -49,7 +49,7 @@ func ApplyAction(state GameState, action Action) GameState {
 	}
 
 	if !action.ContinueRolling {
-		currentScore := state.CurrentPlayerScore()
+		currentScore := state.PlayerScores[0]
 		newScore := currentScore + state.ScoreThisRound
 		if newScore < currentScore {
 			newScore = math.MaxUint8 // Overflow
