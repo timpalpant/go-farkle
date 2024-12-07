@@ -19,8 +19,7 @@ type DB interface {
 	// Retrieve a stored result for the given game state.
 	// Returns the result (if found), and a bool indicating whether or not it was found.
 	Get(state GameState) ([maxNumPlayers]float64, bool)
-	// Serialize the database to the given io.Writer.
-	WriteTo(io.Writer) (int64, error)
+	io.Closer
 }
 
 // DB that stores results in a memory-mapped flat file.
@@ -115,16 +114,16 @@ func (db *FileDB) Get(gs GameState) ([maxNumPlayers]float64, bool) {
 	return result, !math.IsNaN(result[0])
 }
 
-func (db *FileDB) WriteTo(w io.Writer) (int64, error) {
+func (db *FileDB) Close() error {
 	defer db.f.Close()
 
 	// FileDB is already on disk.
 	if err := db.mmap.Unmap(); err != nil {
-		return 0, err
+		return err
 	}
 
 	err := db.f.Close()
-	return 0, err
+	return err
 }
 
 func calcNumDistinctStates(numPlayers int) int {
