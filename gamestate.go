@@ -1,11 +1,12 @@
 package farkle
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 const maxNumPlayers = 4
 const sizeOfGameState = maxNumPlayers + 2
-
-const scoreToWin = 10000 / incr
 
 // State of the game. The current player is always player 0.
 // Game states can be partially ordered since scores can only go up during game play.
@@ -49,6 +50,24 @@ func (gs GameState) IsGameOver() bool {
 // Score of the current player.
 func (gs GameState) CurrentPlayerScore() uint8 {
 	return gs.PlayerScores[0]
+}
+
+// Current player has certainly won if they stop now.
+// This is used as an optimization to avoid further traversing the tree,
+// since there is no reason for the player to continue.
+func (gs GameState) CurrentPlayerHasWon() bool {
+	currentTotalScore := gs.CurrentPlayerScore() + gs.ScoreThisRound
+	if currentTotalScore < gs.CurrentPlayerScore() {
+		currentTotalScore = math.MaxUint8 // Overflow
+	}
+
+	nextPlayerScore := gs.PlayerScores[1]
+	if nextPlayerScore >= scoreToWin {
+		// Our turn is the last turn.
+		return currentTotalScore >= nextPlayerScore
+	}
+
+	return false
 }
 
 // Highest score of any player.

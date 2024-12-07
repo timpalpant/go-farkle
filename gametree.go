@@ -12,6 +12,8 @@ type Action struct {
 	ContinueRolling bool
 }
 
+var farkle = Action{}
+
 func (a Action) String() string {
 	if a.HeldDiceID == 0 && !a.ContinueRolling {
 		return "FARKLE!"
@@ -31,13 +33,17 @@ func ApplyAction(state GameState, action Action) GameState {
 		newScore = math.MaxUint8 // Overflow
 	}
 	state.ScoreThisRound = newScore
-
-	state.NumDiceToRoll -= rollNumDice[action.HeldDiceID]
-	if state.NumDiceToRoll > MaxNumDice {
-		panic(fmt.Errorf("illegal action %+v applied to state %+v: "+
-			"%d dice remain after removing %d",
-			action, state, state.NumDiceToRoll, rollNumDice[action.HeldDiceID]))
+	if action == farkle {
+		state.ScoreThisRound = 0
 	}
+
+	numDiceHeld := rollNumDice[action.HeldDiceID]
+	if numDiceHeld > state.NumDiceToRoll {
+		panic(fmt.Errorf("illegal action %+v applied to state %+v: "+
+			"held %d dice but only had %d to roll",
+			action, state, numDiceHeld, state.NumDiceToRoll))
+	}
+	state.NumDiceToRoll -= numDiceHeld
 	if state.NumDiceToRoll == 0 {
 		state.NumDiceToRoll = MaxNumDice
 	}
@@ -49,9 +55,7 @@ func ApplyAction(state GameState, action Action) GameState {
 			newScore = math.MaxUint8 // Overflow
 		}
 		// Advance to next player by rotating the scores.
-		for i := uint8(0); i < state.NumPlayers-1; i++ {
-			state.PlayerScores[i] = state.PlayerScores[i+1]
-		}
+		copy(state.PlayerScores[:state.NumPlayers], state.PlayerScores[1:state.NumPlayers])
 		state.PlayerScores[state.NumPlayers-1] = newScore
 		state.ScoreThisRound = 0
 		state.NumDiceToRoll = MaxNumDice
@@ -64,7 +68,8 @@ func SelectAction(state GameState, rollID int, db DB) (Action, [maxNumPlayers]fl
 	var bestWinProb [maxNumPlayers]float64
 	var bestAction Action
 	notYetOnBoard := state.CurrentPlayerScore() == 0
-	for _, action := range rollIDToPotentialActions[rollID] {
+	potentialActions := rollIDToPotentialActions[rollID]
+	for _, action := range potentialActions {
 		if state.ScoreThisRound == math.MaxUint8 && action.ContinueRolling {
 			// Overflowed score this round. Our assumption is that this is unlikely.
 			// Approximate the solution using the probability as if they stopped.
@@ -89,12 +94,18 @@ func SelectAction(state GameState, rollID int, db DB) (Action, [maxNumPlayers]fl
 		}
 	}
 
+	if len(potentialActions) == 0 {
+		newState := ApplyAction(state, bestAction)
+		pSubtree := CalculateWinProb(newState, db)
+		bestWinProb = unrotate(pSubtree, state.NumPlayers)
+	}
+
 	return bestAction, bestWinProb
 }
 
 var rollIDToPotentialActions = func() [][]Action {
-	result := make([][]Action, len(rollToPotentialHolds))
-	for rollID, holds := range rollToPotentialHolds {
+	result := make([][]Action, len(rollIDToPotentialHolds))
+	for rollID, holds := range rollIDToPotentialHolds {
 		actions := make([]Action, 0, 2*len(holds))
 		for _, holdOption := range holds {
 			for _, continueRolling := range []bool{true, false} {
@@ -109,23 +120,6 @@ var rollIDToPotentialActions = func() [][]Action {
 	}
 
 	return result
-}()
-
-func IsFarkle(roll Roll) bool {
-	rollID := rollToID[roll]
-	return len(rollIDToPotentialActions[rollID]) == 0
-}
-
-var farkleProbs = func() [MaxNumDice + 1]float64 {
-	var pFarkle [MaxNumDice + 1]float64
-	for numDice := 1; numDice <= MaxNumDice; numDice++ {
-		for _, wRoll := range allRolls[numDice] {
-			if IsFarkle(wRoll.Roll) {
-				pFarkle[numDice] += wRoll.Prob
-			}
-		}
-	}
-	return pFarkle
 }()
 
 // Recursive implementation that forward propagates all possible actions from the current
@@ -154,15 +148,6 @@ func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
 		return pWin
 	}
 
-	var pWin [maxNumPlayers]float64
-	for _, wRoll := range allRolls[state.NumDiceToRoll] {
-		// Find the action that maximize current player win probability.
-		_, pSubgame := SelectAction(state, wRoll.ID, db)
-		for i := uint8(0); i < state.NumPlayers; i++ {
-			pWin[i] += wRoll.Prob * pSubgame[i]
-		}
-	}
-
 	// With non-zero probability, all players will Farkle in a row, resulting
 	// in recursing to the same game state. At this state, the win probabilities
 	// must be the same as the one we are currently calculating. This is true if:
@@ -175,10 +160,13 @@ func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
 	// subtrees (that do not end up in the same state), scale the final result.
 	db.Put(state, [maxNumPlayers]float64{})
 
-	newState := ApplyAction(state, Action{})
-	pSubtree := unrotate(CalculateWinProb(newState, db), state.NumPlayers)
-	for i := uint8(0); i < state.NumPlayers; i++ {
-		pWin[i] += farkleProbs[state.NumDiceToRoll] * pSubtree[i]
+	var pWin [maxNumPlayers]float64
+	for _, wRoll := range allRolls[state.NumDiceToRoll] {
+		// Find the action that maximize current player win probability.
+		_, pSubgame := SelectAction(state, wRoll.ID, db)
+		for i := uint8(0); i < state.NumPlayers; i++ {
+			pWin[i] += wRoll.Prob * pSubgame[i]
+		}
 	}
 
 	// Rescale probabilities to account for recursive farkle into this same state.
@@ -196,10 +184,8 @@ func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
 
 func unrotate(pWin [maxNumPlayers]float64, numPlayers uint8) [maxNumPlayers]float64 {
 	var result [maxNumPlayers]float64
+	copy(result[1:numPlayers], pWin[:numPlayers])
 	result[0] = pWin[numPlayers-1]
-	for i := uint8(1); i < numPlayers; i++ {
-		result[i] = pWin[i-1]
-	}
 	return result
 }
 

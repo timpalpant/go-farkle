@@ -56,7 +56,7 @@ func playGame(db farkle.DB, numPlayers int) {
 	playerID := 0
 
 	for {
-		roll := farkle.NewRandomRoll(farkle.MaxNumDice)
+		roll := farkle.NewRandomRoll(int(state.NumDiceToRoll))
 		fmt.Printf("Rolled: %s\n", roll)
 		rollID := farkle.GetRollID(roll)
 
@@ -68,10 +68,11 @@ func playGame(db farkle.DB, numPlayers int) {
 			score := state.ScoreThisRound + farkle.CalculateScore(held)
 			continueRolling := true
 			if state.CurrentPlayerScore() > 0 || score >= 500/50 {
+				fmt.Printf("...score this round = %d", score*50)
 				continueRolling = promptUserToContinue()
 			}
 			action = farkle.Action{
-				HeldDiceID:      rollID,
+				HeldDiceID:      farkle.GetRollID(held),
 				ContinueRolling: continueRolling,
 			}
 
@@ -89,10 +90,10 @@ func playGame(db farkle.DB, numPlayers int) {
 				if !action.ContinueRolling {
 					pAction = pWinAction[numPlayers-1]
 				}
-				fmt.Printf("...optimal action was %s with pWin = %.1f%%\n",
-					optAction, 100*pOpt)
-				fmt.Printf("...selected action has pWin = %.1f%% (%.1f%%)\n",
-					100*pAction, 100*(pAction-pOpt))
+				fmt.Printf("...optimal action was %s with pWin = %f\n",
+					optAction, pOpt)
+				fmt.Printf("...selected action has pWin = %f (%f)\n",
+					pAction, pAction-pOpt)
 			}
 		} else { // CP
 			action, _ = farkle.SelectAction(state, rollID, db)
@@ -101,6 +102,7 @@ func playGame(db farkle.DB, numPlayers int) {
 
 		state = farkle.ApplyAction(state, action)
 		if !action.ContinueRolling {
+			fmt.Printf("Current scores: %v\n\n", state.PlayerScores)
 			playerID--
 			if playerID < 0 {
 				playerID = numPlayers - 1
@@ -111,20 +113,19 @@ func playGame(db farkle.DB, numPlayers int) {
 
 func promptUserForDiceToKeep(roll farkle.Roll) farkle.Roll {
 	var held farkle.Roll
-	var err error
 	for {
 		fmt.Printf("...enter dice to keep: ")
-		var toKeepStr string
-		fmt.Scanln(&toKeepStr)
+		rdr := bufio.NewReader(os.Stdin)
+		toKeepStr, err := rdr.ReadString('\n')
+		if err != nil {
+			fmt.Printf("......unable to read dice: %v\n", err)
+			continue
+		}
 
 		held, err = parseHeld(toKeepStr)
 		if err == nil {
-			for die, numHeld := range held {
-				if numHeld > roll[die] {
-					err = fmt.Errorf("can't hold %d %ds, only have %d",
-						numHeld, die, roll[die])
-					break
-				}
+			if !farkle.IsValidHold(roll, held) {
+				err = fmt.Errorf("can't hold %v, not a valid trick", held)
 			}
 
 			if err == nil {
@@ -172,12 +173,19 @@ var charToDie = map[rune]uint8{
 }
 
 func parseHeld(toKeepStr string) (farkle.Roll, error) {
-	toKeepStr = strings.ReplaceAll(strings.ReplaceAll(toKeepStr, " ", ""), ",", "")
+	toKeepStr = strings.ReplaceAll(strings.Map(func(c rune) rune {
+		_, ok := charToDie[c]
+		if ok {
+			return c
+		}
+		return ' '
+	}, toKeepStr), " ", "")
+
 	var held farkle.Roll
 	for _, c := range toKeepStr {
 		die, ok := charToDie[c]
 		if !ok {
-			return farkle.Roll{}, fmt.Errorf("not a valid die: %c", c)
+			return farkle.Roll{}, fmt.Errorf("not a valid die: '%c'", c)
 		}
 
 		held[die]++

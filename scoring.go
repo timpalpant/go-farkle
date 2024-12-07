@@ -1,7 +1,8 @@
 package farkle
 
-const numDistinctScores = 255
 const numDistinctScoreBits = 8
+const incr = 50
+const scoreToWin = 10000 / incr
 
 type TrickType int
 
@@ -22,8 +23,6 @@ const (
 	FourOfAKindPlusPair
 	TwoTriplets
 )
-
-const incr = 50
 
 var trickScores = map[TrickType]uint8{
 	Single1:             100 / incr,
@@ -234,7 +233,7 @@ func potentialHolds(roll Roll) []Roll {
 	return result
 }
 
-var rollToPotentialHolds = func() [][]Roll {
+var rollIDToPotentialHolds = func() [][]Roll {
 	var result [][]Roll
 	for _, rolls := range allRolls {
 		for _, weightedRoll := range rolls {
@@ -244,10 +243,27 @@ var rollToPotentialHolds = func() [][]Roll {
 	return result
 }()
 
+func IsFarkle(roll Roll) bool {
+	rollID := rollToID[roll]
+	return len(rollIDToPotentialHolds[rollID]) == 0
+}
+
+func IsValidHold(roll, held Roll) bool {
+	rollID := GetRollID(roll)
+	potentialHolds := rollIDToPotentialHolds[rollID]
+	potentialHoldsSet := make(map[Roll]struct{}, len(potentialHolds))
+	for _, hold := range potentialHolds {
+		potentialHoldsSet[hold] = struct{}{}
+	}
+
+	_, ok := potentialHoldsSet[held]
+	return ok
+}
+
 // For each set of held dice, the total score.
 var scoreCache = func() []uint8 {
 	result := make([]uint8, nDistinctRolls)
-	for _, holds := range rollToPotentialHolds {
+	for _, holds := range rollIDToPotentialHolds {
 		for _, hold := range holds {
 			rollID := rollToID[hold]
 			result[rollID] = CalculateScore(hold)

@@ -31,7 +31,7 @@ type InMemoryDB struct {
 	table      []float64
 	numPlayers int
 
-	nPuts, nHits, nMisses int
+	nPuts int
 }
 
 func NewInMemoryDB(numPlayers int) *InMemoryDB {
@@ -68,23 +68,20 @@ func (db *InMemoryDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
 	idx := db.calcOffset(gs)
 	copy(db.table[idx:], pWin[:gs.NumPlayers])
 	nonZero := false
-	for i := uint8(0); i < gs.NumPlayers; i++ {
-		if pWin[i] > 0 {
+	for _, p := range pWin[:gs.NumPlayers] {
+		if p > 0 {
 			db.nPuts++
 			nonZero = true
 			break
 		}
 	}
 
-	if nonZero && db.nPuts%100000 == 0 {
+	if nonZero && db.nPuts%1000 == 0 {
 		pctComplete := float64(db.nPuts) / float64(len(db.table)/int(gs.NumPlayers))
-		hitRate := float64(db.nHits) / float64(db.nHits+db.nMisses)
 		glog.Infof(
 			"Database has %d entries (%.1f%% complete). "+
-				"Hit rate: %d hits, %d misses (%.1f%%). "+
 				"Last put: %s -> %v",
 			db.nPuts, 100*pctComplete,
-			db.nHits, db.nMisses, 100*hitRate,
 			gs, pWin[:gs.NumPlayers])
 	}
 
@@ -94,12 +91,10 @@ func (db *InMemoryDB) Get(gs GameState) ([maxNumPlayers]float64, bool) {
 	idx := db.calcOffset(gs)
 	var result [maxNumPlayers]float64
 	if math.IsNaN(db.table[idx]) {
-		db.nMisses++
 		return result, false
 	}
 
 	copy(result[:], db.table[idx:idx+int(gs.NumPlayers)])
-	db.nHits++
 	return result, true
 }
 
@@ -150,9 +145,8 @@ func (db *PebbleDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
 	key = key[:n]
 
 	value := make([]byte, 8*gs.NumPlayers)
-	for i := uint8(0); i < gs.NumPlayers; i++ {
+	for i, p := range pWin[:gs.NumPlayers] {
 		buf := value[8*i : 8*(i+1)]
-		p := pWin[i]
 		binary.LittleEndian.PutUint64(buf, math.Float64bits(p))
 	}
 
