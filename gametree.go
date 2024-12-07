@@ -67,7 +67,7 @@ func ApplyAction(state GameState, action Action) GameState {
 func SelectAction(state GameState, rollID int, db DB) (Action, [maxNumPlayers]float64) {
 	var bestWinProb [maxNumPlayers]float64
 	var bestAction Action
-	notYetOnBoard := state.CurrentPlayerScore() == 0
+	notYetOnBoard := (state.PlayerScores[0] == 0)
 	potentialActions := rollIDToPotentialActions[rollID]
 	for _, action := range potentialActions {
 		if state.ScoreThisRound == math.MaxUint8 && action.ContinueRolling {
