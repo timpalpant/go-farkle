@@ -3,7 +3,12 @@ package farkle
 import (
 	"fmt"
 	"math"
+
+	"github.com/golang/glog"
 )
+
+const maxPolicyIter = 10
+const valueTol = 1e-6
 
 // Action is the choice made by a player after rolling.
 // A zero Action is a Farkle.
@@ -11,8 +16,6 @@ type Action struct {
 	HeldDiceID      int
 	ContinueRolling bool
 }
-
-var farkle = Action{}
 
 func (a Action) String() string {
 	if a.HeldDiceID == 0 && !a.ContinueRolling {
@@ -65,6 +68,7 @@ func ApplyAction(state GameState, action Action) GameState {
 	return state
 }
 
+// Find the action that maximizes current player win probability.
 func SelectAction(state GameState, rollID int, db DB) (Action, [maxNumPlayers]float64) {
 	var bestWinProb [maxNumPlayers]float64
 	var bestAction Action
@@ -123,8 +127,8 @@ var rollIDToPotentialActions = func() [][]Action {
 	return result
 }()
 
-// Recursive implementation that forward propagates all possible actions from the current
-// game state and stores results in `db`.
+// Calculate the value of a given game state by recursively propagating
+// all possitlbe actions forward. Save the result in `db`.
 func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
 	if state.IsGameOver() {
 		winningScore := state.HighestScore()
@@ -150,36 +154,39 @@ func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
 	}
 
 	// With non-zero probability, all players will Farkle in a row, resulting
-	// in recursing to the same game state. At this state, the win probabilities
-	// must be the same as the one we are currently calculating. This is true if:
-	//
-	//  p_win = \sum (p_roll * p_action) + p_f * p_win
-	//  (1 - p_f ^ N) * p_win = \sum (p_roll * p_action)
-	//  p_win = \sum (p_roll * p_action) / (1 - p_f)
-	//
-	// Therefore we put zeros into the database now. After computing all other
-	// subtrees (that do not end up in the same state), scale the final result.
-	db.Put(state, [maxNumPlayers]float64{})
-
+	// in recursing to the same game state. We need to perform value iteration
+	// until the policy converges. To prevent infinite recursion, initialize
+	// the value to 1/n.
 	var pWin [maxNumPlayers]float64
-	for _, wRoll := range allRolls[state.NumDiceToRoll] {
-		// Find the action that maximizes current player win probability.
-		_, pSubgame := SelectAction(state, wRoll.ID, db)
-		for i := uint8(0); i < state.NumPlayers; i++ {
-			pWin[i] += wRoll.Prob * pSubgame[i]
-		}
+	for i := range pWin[:state.NumPlayers] {
+		pWin[i] = 1.0 / float64(state.NumPlayers)
 	}
-
-	// Rescale probabilities to account for recursive farkle into this same state.
-	pTotal := 0.0
-	for _, p := range pWin[:state.NumPlayers] {
-		pTotal += p
-	}
-	for i, p := range pWin[:state.NumPlayers] {
-		pWin[i] = p / pTotal
-	}
-
 	db.Put(state, pWin)
+
+	delta := 1.0
+	for policyIter := 0; delta > valueTol && policyIter < maxPolicyIter; policyIter++ {
+		var pWinIter [maxNumPlayers]float64
+		for _, wRoll := range allRolls[state.NumDiceToRoll] {
+			_, pSubgame := SelectAction(state, wRoll.ID, db)
+			for i, p := range pSubgame[:state.NumPlayers] {
+				pWinIter[i] += wRoll.Prob * p
+			}
+		}
+
+		delta = 0.0
+		for i, p := range pWinIter[:state.NumPlayers] {
+			delta = math.Max(delta, math.Abs(p-pWin[i]))
+		}
+
+		// Update current estimate of this state's value.
+		pWin = pWinIter
+		db.Put(state, pWin)
+	}
+
+	if delta > valueTol {
+		glog.Warningf("Value iteration for state %s did not converge: delta = %f", state, delta)
+	}
+
 	return pWin
 }
 
