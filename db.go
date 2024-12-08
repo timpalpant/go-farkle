@@ -9,9 +9,11 @@ import (
 	"math"
 	"os"
 
-	"github.com/edsrzf/mmap-go"
 	"github.com/golang/glog"
+	"golang.org/x/sys/unix"
 )
+
+const unsetValue = -1.0
 
 type DB interface {
 	// Store the result for a game state in the database.
@@ -25,7 +27,7 @@ type DB interface {
 // DB that stores results in a memory-mapped flat file.
 type FileDB struct {
 	f          *os.File
-	mmap       mmap.MMap
+	mmap       []byte
 	numPlayers int
 
 	nPuts int
@@ -47,9 +49,9 @@ func NewFileDB(path string, numPlayers int) (*FileDB, error) {
 		glog.Infof("Initializing new database at %s with %d entries", path, numEntries)
 		w := bufio.NewWriterSize(f, 4*1024*1024)
 		nanBits := make([]byte, 8)
-		binary.LittleEndian.PutUint64(nanBits, math.Float64bits(math.NaN()))
+		binary.LittleEndian.PutUint64(nanBits, math.Float64bits(unsetValue))
 		for i := 0; i < numEntries; i++ {
-			if i % 1000000000 == 0 {
+			if i%1000000000 == 0 {
 				glog.Infof("...%d", i)
 			}
 			w.Write(nanBits)
@@ -70,7 +72,9 @@ func NewFileDB(path string, numPlayers int) (*FileDB, error) {
 		}
 	}
 
-	mmap, err := mmap.Map(f, mmap.RDWR, 0)
+	flags := unix.MAP_SHARED
+	prot := unix.PROT_READ | unix.PROT_WRITE
+	mmap, err := unix.Mmap(int(f.Fd()), 0, int(fileSize), prot, flags)
 	if err != nil {
 		_ = f.Close()
 		return nil, err
@@ -114,16 +118,16 @@ func (db *FileDB) Get(gs GameState) ([maxNumPlayers]float64, bool) {
 		result[i] = math.Float64frombits(value)
 	}
 
-	return result, !math.IsNaN(result[0])
+	return result, result[0] >= 0
 }
 
 func (db *FileDB) Close() error {
 	defer db.f.Close()
 
-	if err := db.mmap.Flush(); err != nil {
+	if err := unix.Msync(db.mmap, unix.MS_SYNC); err != nil {
 		return err
 	}
-	if err := db.mmap.Unmap(); err != nil {
+	if err := unix.Munmap(db.mmap); err != nil {
 		return err
 	}
 
