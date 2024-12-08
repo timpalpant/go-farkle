@@ -92,20 +92,15 @@ func initDB(w io.Writer, numEntries int) error {
 func (db *FileDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
 	idx := 8 * calcOffset(gs)
 	buf := db.mmap[idx : idx+8*db.numPlayers]
-	nonZero := false
 	for i, p := range pWin[:gs.NumPlayers] {
-		nonZero = nonZero || (p > 0)
 		value := math.Float64bits(p)
 		binary.LittleEndian.PutUint64(buf[8*i:8*(i+1)], value)
 	}
 
-	if nonZero {
-		db.nPuts++
-	}
-
-	if nonZero && db.nPuts%100000 == 0 {
+	db.nPuts++
+	if db.nPuts%100000 == 0 {
 		glog.Infof(
-			"Database has %d entries. Last put: %s -> %v",
+			"%d puts into database. Last put: %s -> %v",
 			db.nPuts, gs, pWin[:gs.NumPlayers])
 	}
 }
