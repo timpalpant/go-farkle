@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"math/rand"
 	"os"
 	"strings"
 
@@ -14,12 +15,14 @@ import (
 type Params struct {
 	NumPlayers int
 	DBPath     string
+	Seed       int64
 }
 
 func main() {
 	var params Params
 	flag.IntVar(&params.NumPlayers, "num_players", 2, "Number of players")
 	flag.StringVar(&params.DBPath, "db", "2player.db", "Path to solution database")
+	flag.Int64Var(&params.Seed, "seed", 12345, "Random seed")
 	flag.Parse()
 
 	db, err := farkle.NewFileDB(params.DBPath, params.NumPlayers)
@@ -28,6 +31,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	rand.Seed(params.Seed)
 	playGame(db, params.NumPlayers)
 }
 
@@ -43,7 +47,7 @@ func playGame(db farkle.DB, numPlayers int) {
 		var action farkle.Action
 		if farkle.IsFarkle(roll) {
 			fmt.Println("...farkle!")
-		} else if humanPlayerID == 0 {
+		} else if humanPlayerID == -1 {
 			held := promptUserForDiceToKeep(roll)
 			score := state.ScoreThisRound + farkle.CalculateScore(held)
 			continueRolling := true
@@ -57,19 +61,19 @@ func playGame(db farkle.DB, numPlayers int) {
 			}
 
 			optAction, pWinOpt := farkle.SelectAction(state, rollID, db)
-			if action == optAction {
+			pOpt := pWinOpt[0]
+			if !optAction.ContinueRolling {
+				pOpt = pWinOpt[numPlayers-1]
+			}
+			selectedState := farkle.ApplyAction(state, action)
+			pWinAction := farkle.CalculateWinProb(selectedState, db)
+			pAction := pWinAction[0]
+			if !action.ContinueRolling {
+				pAction = pWinAction[numPlayers-1]
+			}
+			if pAction >= pOpt {
 				fmt.Println("...selected action is optimal!")
 			} else {
-				pOpt := pWinOpt[0]
-				if !optAction.ContinueRolling {
-					pOpt = pWinOpt[numPlayers-1]
-				}
-				selectedState := farkle.ApplyAction(state, action)
-				pWinAction := farkle.CalculateWinProb(selectedState, db)
-				pAction := pWinAction[0]
-				if !action.ContinueRolling {
-					pAction = pWinAction[numPlayers-1]
-				}
 				fmt.Printf("...optimal action was %s with pWin = %f\n",
 					optAction, pOpt)
 				fmt.Printf("...selected action has pWin = %f (%f)\n",

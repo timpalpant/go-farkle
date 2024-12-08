@@ -28,12 +28,13 @@ func (a Action) String() string {
 }
 
 func ApplyAction(state GameState, action Action) GameState {
-	newScore := state.ScoreThisRound + scoreCache[action.HeldDiceID]
+	trickScore := scoreCache[action.HeldDiceID]
+	newScore := state.ScoreThisRound + trickScore
 	if newScore < state.ScoreThisRound {
 		newScore = math.MaxUint8 // Overflow
 	}
 	state.ScoreThisRound = newScore
-	if action == farkle {
+	if trickScore == 0 { // Farkle
 		state.ScoreThisRound = 0
 	}
 
@@ -129,7 +130,7 @@ func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
 		winningScore := state.HighestScore()
 		winners := make([]int, 0, maxNumPlayers)
 		for player, score := range state.PlayerScores[:state.NumPlayers] {
-			if score >= winningScore {
+			if score == winningScore {
 				winners = append(winners, player)
 			}
 		}
@@ -162,7 +163,7 @@ func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
 
 	var pWin [maxNumPlayers]float64
 	for _, wRoll := range allRolls[state.NumDiceToRoll] {
-		// Find the action that maximize current player win probability.
+		// Find the action that maximizes current player win probability.
 		_, pSubgame := SelectAction(state, wRoll.ID, db)
 		for i := uint8(0); i < state.NumPlayers; i++ {
 			pWin[i] += wRoll.Prob * pSubgame[i]
