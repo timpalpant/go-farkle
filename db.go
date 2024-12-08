@@ -13,8 +13,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const unsetValue = -1.0
-
 type DB interface {
 	// Store the result for a game state in the database.
 	Put(state GameState, pWin [maxNumPlayers]float64)
@@ -41,22 +39,13 @@ func NewFileDB(path string, numPlayers int) (*FileDB, error) {
 	var f *os.File
 	stat, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		// Initialize a new empty database with all NaN values.
+		glog.Infof("Initializing new database at %s with %d entries", path, numEntries)
 		f, err = os.Create(path)
 		if err != nil {
 			return nil, err
 		}
-		glog.Infof("Initializing new database at %s with %d entries", path, numEntries)
-		w := bufio.NewWriterSize(f, 4*1024*1024)
-		nanBits := make([]byte, 8)
-		binary.LittleEndian.PutUint64(nanBits, math.Float64bits(unsetValue))
-		for i := 0; i < numEntries; i++ {
-			if i%1000000000 == 0 {
-				glog.Infof("...%d", i)
-			}
-			w.Write(nanBits)
-		}
-		if err := w.Flush(); err != nil {
+		if err := initDB(f, numEntries); err != nil {
+			_ = f.Close()
 			return nil, err
 		}
 	} else if err != nil {
@@ -66,7 +55,7 @@ func NewFileDB(path string, numPlayers int) (*FileDB, error) {
 			"%s is not the correct size for %d-player database: "+
 				"got %d, expected %d", path, numPlayers, stat.Size(), fileSize)
 	} else {
-		f, err = os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0755)
+		f, err = os.OpenFile(path, os.O_RDWR, 0755)
 		if err != nil {
 			return nil, err
 		}
@@ -85,6 +74,19 @@ func NewFileDB(path string, numPlayers int) (*FileDB, error) {
 		mmap:       mmap,
 		numPlayers: numPlayers,
 	}, nil
+}
+
+func initDB(w io.Writer, numEntries int) error {
+	bufW := bufio.NewWriterSize(w, 4*1024*1024)
+	nanBits := make([]byte, 8)
+	binary.LittleEndian.PutUint64(nanBits, math.Float64bits(math.NaN()))
+	for i := 0; i < numEntries; i++ {
+		if i%100000000 == 0 {
+			glog.Infof("...%d", i)
+		}
+		bufW.Write(nanBits)
+	}
+	return bufW.Flush()
 }
 
 func (db *FileDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
@@ -118,7 +120,7 @@ func (db *FileDB) Get(gs GameState) ([maxNumPlayers]float64, bool) {
 		result[i] = math.Float64frombits(value)
 	}
 
-	return result, result[0] >= 0
+	return result, !math.IsNaN(result[0])
 }
 
 func (db *FileDB) Close() error {
