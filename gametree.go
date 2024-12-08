@@ -7,8 +7,8 @@ import (
 	"github.com/golang/glog"
 )
 
-const maxPolicyIter = 10
-const valueTol = 1e-6
+const maxValueIter = 20
+const valueTol = 1e-12
 
 // Action is the choice made by a player after rolling.
 // A zero Action is a Farkle.
@@ -164,7 +164,7 @@ func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
 	db.Put(state, pWin)
 
 	delta := 1.0
-	for policyIter := 0; delta > valueTol && policyIter < maxPolicyIter; policyIter++ {
+	for policyIter := 0; delta > valueTol && policyIter < maxValueIter; policyIter++ {
 		var pWinIter [maxNumPlayers]float64
 		for _, wRoll := range allRolls[state.NumDiceToRoll] {
 			_, pSubgame := SelectAction(state, wRoll.ID, db)
