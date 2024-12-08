@@ -121,7 +121,7 @@ func makeRolls(nDice int) []Roll {
 // and the probability of realizing that combination.
 type WeightedRoll struct {
 	Roll
-	ID   int
+	ID   uint16
 	Prob float64
 }
 
@@ -135,7 +135,7 @@ func makeWeightedRolls(nDice int) []WeightedRoll {
 	}
 
 	result := make([]WeightedRoll, 0, len(rollToFreq))
-	rollID := 0
+	rollID := uint16(0)
 	for roll, count := range rollToFreq {
 		result = append(result, WeightedRoll{
 			Roll: roll,
@@ -157,7 +157,7 @@ var allRolls = func() [MaxNumDice + 1][]WeightedRoll {
 
 	// Renumber all rolls with a distinct, sequential ID
 	// that can be used to look up other properties.
-	nextRollID := 0
+	nextRollID := uint16(0)
 	for _, rolls := range result {
 		for i := range rolls {
 			rolls[i].ID = nextRollID
@@ -179,8 +179,8 @@ var nDistinctRolls = func() int {
 
 // Mapping of unique, sequential IDs for all possible rolls of 1 - maxNumDice.
 // In the range [0, nDistinctRolls).
-var rollToID = func() map[Roll]int {
-	result := make(map[Roll]int, nDistinctRolls)
+var rollToID = func() map[Roll]uint16 {
+	result := make(map[Roll]uint16, nDistinctRolls)
 	for _, rolls := range allRolls {
 		for _, wRoll := range rolls {
 			result[wRoll.Roll] = wRoll.ID
@@ -199,7 +199,7 @@ var rollsByID = func() []Roll {
 	return result
 }()
 
-func GetRollID(roll Roll) int {
+func GetRollID(roll Roll) uint16 {
 	id, ok := rollToID[roll]
 	if !ok {
 		panic(fmt.Errorf("no roll ID for: %v", roll))

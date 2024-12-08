@@ -13,7 +13,7 @@ const valueTol = 1e-6
 // Action is the choice made by a player after rolling.
 // A zero Action is a Farkle.
 type Action struct {
-	HeldDiceID      int
+	HeldDiceID      uint16
 	ContinueRolling bool
 }
 
@@ -69,7 +69,7 @@ func ApplyAction(state GameState, action Action) GameState {
 }
 
 // Find the action that maximizes current player win probability.
-func SelectAction(state GameState, rollID int, db DB) (Action, [maxNumPlayers]float64) {
+func SelectAction(state GameState, rollID uint16, db DB) (Action, [maxNumPlayers]float64) {
 	var bestWinProb [maxNumPlayers]float64
 	var bestAction Action
 	notYetOnBoard := (state.PlayerScores[0] == 0)
