@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/golang/glog"
 	"github.com/timpalpant/go-farkle"
@@ -47,7 +48,7 @@ func playGame(db farkle.DB, numPlayers int) {
 		var action farkle.Action
 		if farkle.IsFarkle(roll) {
 			fmt.Println("...farkle!")
-		} else if humanPlayerID == -1 {
+		} else if humanPlayerID == 0 {
 			held := promptUserForDiceToKeep(roll)
 			score := state.ScoreThisRound + farkle.CalculateScore(held)
 			continueRolling := true
@@ -80,6 +81,7 @@ func playGame(db farkle.DB, numPlayers int) {
 					pAction, pAction-pOpt)
 			}
 		} else { // CP
+			time.Sleep(500 * time.Millisecond)  // Thinking
 			action, _ = farkle.SelectAction(state, rollID, db)
 			fmt.Printf("...selected action %s\n", action)
 		}
