@@ -3,6 +3,8 @@ package farkle
 import (
 	"fmt"
 	"math"
+	"runtime"
+	"sync"
 )
 
 const maxValueIter = 20
@@ -126,12 +128,39 @@ var rollIDToPotentialActions = func() [][]Action {
 }()
 
 func UpdateAll(db DB) {
+	numWorkers := runtime.NumCPU()
+	scoresCh := make(chan [maxNumPlayers]uint8, 2*numWorkers)
+
+	var mx sync.Mutex
+	var wg sync.WaitGroup
+	wg.Add(numWorkers)
+	for i := 0; i < numWorkers; i++ {
+		go func() {
+			updateWorker(db, scoresCh, &mx)
+			wg.Done()
+		}()
+	}
+
+	for _, playerScores := range allPossibleScores(db.NumPlayers()) {
+		scoresCh <- playerScores
+	}
+	close(scoresCh)
+
+	wg.Wait()
+}
+
+func updateWorker(db DB, scoresCh <-chan [maxNumPlayers]uint8, mx *sync.Mutex) {
 	numPlayers := db.NumPlayers()
-	for _, playerScores := range allPossibleScores(numPlayers) {
-		for scoreThisRound := uint8(math.MaxUint8); scoreThisRound >= scoreThisRound; scoreThisRound-- {
+	numStatesPerIter := math.MaxUint8 * MaxNumDice
+	pendingStates := make([]GameState, numStatesPerIter)
+	pendingResults := make([][maxNumPlayers]float64, numStatesPerIter)
+	for playerScores := range scoresCh {
+		pendingStates = pendingStates[:0]
+		pendingResults = pendingResults[:0]
+		for scoreThisRound := math.MaxUint8; scoreThisRound >= 0; scoreThisRound-- {
 			for numDiceToRoll := uint8(1); numDiceToRoll <= MaxNumDice; numDiceToRoll++ {
 				state := GameState{
-					ScoreThisRound: scoreThisRound,
+					ScoreThisRound: uint8(scoreThisRound),
 					NumDiceToRoll:  numDiceToRoll,
 					NumPlayers:     numPlayers,
 					PlayerScores:   playerScores,
@@ -145,9 +174,16 @@ func UpdateAll(db DB) {
 					}
 				}
 
-				db.Put(state, pWin)
+				pendingStates = append(pendingStates, state)
+				pendingResults = append(pendingResults, pWin)
 			}
 		}
+
+		mx.Lock()
+		for i, state := range pendingStates {
+			db.Put(state, pendingResults[i])
+		}
+		mx.Unlock()
 	}
 }
 
