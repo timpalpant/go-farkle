@@ -25,6 +25,7 @@ type DB interface {
 // DB that stores results in a memory-mapped flat file.
 type FileDB struct {
 	f          *os.File
+	mask       []uint64
 	mmap       []byte
 	numPlayers int
 
@@ -39,12 +40,12 @@ func NewFileDB(path string, numPlayers int) (*FileDB, error) {
 	var f *os.File
 	stat, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		glog.Infof("Initializing new database at %s with %d entries", path, numEntries)
+		glog.Infof("Initializing new database at %s with %d states", path, numStates)
 		f, err = os.Create(path)
 		if err != nil {
 			return nil, err
 		}
-		if err := initDB(f, numEntries); err != nil {
+		if err := initDB(f, numStates, numPlayers); err != nil {
 			_ = f.Close()
 			return nil, err
 		}
@@ -71,31 +72,44 @@ func NewFileDB(path string, numPlayers int) (*FileDB, error) {
 
 	return &FileDB{
 		f:          f,
+		mask:    make([]uint64, numStates/64+1),
 		mmap:       mmap,
 		numPlayers: numPlayers,
 	}, nil
 }
 
-func initDB(w io.Writer, numEntries int) error {
+func initDB(w io.Writer, numStates, numPlayers int) error {
 	bufW := bufio.NewWriterSize(w, 4*1024*1024)
-	nanBits := make([]byte, 8)
-	binary.LittleEndian.PutUint64(nanBits, math.Float64bits(math.NaN()))
-	for i := 0; i < numEntries; i++ {
+
+	defaultValue := make([]byte, 8*numPlayers)
+	bits := math.Float64bits(1.0 / float64(numPlayers))
+	for i := 0; i < numPlayers; i++ {
+		buf := defaultValue[8*i : 8*(i+1)]
+		binary.LittleEndian.PutUint64(buf, bits)
+	}
+
+	for i := 0; i < numStates; i++ {
 		if i%100000000 == 0 {
 			glog.Infof("...%d", i)
 		}
-		bufW.Write(nanBits)
+		bufW.Write(defaultValue)
 	}
 	return bufW.Flush()
 }
 
 func (db *FileDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
-	idx := 8 * calcOffset(gs)
+	gsID := calcOffset(gs)
+	idx := 8 * db.numPlayers * gsID
 	buf := db.mmap[idx : idx+8*db.numPlayers]
 	for i, p := range pWin[:gs.NumPlayers] {
 		value := math.Float64bits(p)
 		binary.LittleEndian.PutUint64(buf[8*i:8*(i+1)], value)
 	}
+
+	// Mark this GameState as calculated in the bitmask.
+	maskIdx := gsID / 64
+	bitIdx := gsID % 64
+	db.mask[maskIdx] |= (1 << bitIdx)
 
 	db.nPuts++
 	if db.nPuts%100000 == 0 {
@@ -106,7 +120,8 @@ func (db *FileDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
 }
 
 func (db *FileDB) Get(gs GameState) ([maxNumPlayers]float64, bool) {
-	idx := 8 * calcOffset(gs)
+	gsID := calcOffset(gs)
+	idx := 8 * db.numPlayers * gsID
 	buf := db.mmap[idx : idx+8*db.numPlayers]
 
 	var result [maxNumPlayers]float64
@@ -115,7 +130,25 @@ func (db *FileDB) Get(gs GameState) ([maxNumPlayers]float64, bool) {
 		result[i] = math.Float64frombits(value)
 	}
 
-	return result, !math.IsNaN(result[0])
+	maskIdx := gsID / 64
+	bitIdx := gsID % 64
+	isSet := (db.mask[maskIdx] & (1 << bitIdx)) != 0
+
+	return result, isSet
+}
+
+// Mark all states as unset in the database.
+func (db *FileDB) Train() {
+	for i := range db.mask {
+		db.mask[i] = 0
+	}
+}
+
+// Mark all states as set in the database.
+func (db *FileDB) Eval() {
+	for i := range db.mask {
+		db.mask[i] = ^uint64(0)
+	}
 }
 
 func (db *FileDB) Close() error {
@@ -144,5 +177,5 @@ func calcOffset(gs GameState) int {
 	for i, score := range gs.PlayerScores[:gs.NumPlayers] {
 		idx += int(score) << (i * numScoreBits)
 	}
-	return int(gs.NumPlayers) * idx
+	return idx
 }

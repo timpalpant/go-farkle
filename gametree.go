@@ -3,8 +3,6 @@ package farkle
 import (
 	"fmt"
 	"math"
-
-	"github.com/golang/glog"
 )
 
 const maxValueIter = 20
@@ -149,44 +147,27 @@ func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
 		return result
 	}
 
-	if pWin, ok := db.Get(state); ok {
+	pWin, ok := db.Get(state)
+	if ok {
 		return pWin
 	}
 
 	// With non-zero probability, all players will Farkle in a row, resulting
 	// in recursing to the same game state. We need to perform value iteration
-	// until the policy converges. To prevent infinite recursion, initialize
-	// the value to 1/n.
-	var pWin [maxNumPlayers]float64
-	for i := range pWin[:state.NumPlayers] {
-		pWin[i] = 1.0 / float64(state.NumPlayers)
-	}
+	// until the policy converges. Put the current value now to mark it as "calculated"
+	// and prevent infinite recursion.
 	db.Put(state, pWin)
 
-	delta := 1.0
-	for policyIter := 0; delta > valueTol && policyIter < maxValueIter; policyIter++ {
-		var pWinIter [maxNumPlayers]float64
-		for _, wRoll := range allRolls[state.NumDiceToRoll] {
-			_, pSubgame := SelectAction(state, wRoll.ID, db)
-			for i, p := range pSubgame[:state.NumPlayers] {
-				pWinIter[i] += wRoll.Prob * p
-			}
+	pWin = [maxNumPlayers]float64{}
+	for _, wRoll := range allRolls[state.NumDiceToRoll] {
+		_, pSubgame := SelectAction(state, wRoll.ID, db)
+		for i, p := range pSubgame[:state.NumPlayers] {
+			pWin[i] += wRoll.Prob * p
 		}
-
-		delta = 0.0
-		for i, p := range pWinIter[:state.NumPlayers] {
-			delta = math.Max(delta, math.Abs(p-pWin[i]))
-		}
-
-		// Update current estimate of this state's value.
-		pWin = pWinIter
-		db.Put(state, pWin)
 	}
 
-	if delta > valueTol {
-		glog.Warningf("Value iteration for state %s did not converge: delta = %f", state, delta)
-	}
-
+	// Put the updated value into the database.
+	db.Put(state, pWin)
 	return pWin
 }
 

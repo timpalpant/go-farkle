@@ -33,6 +33,7 @@ func main() {
 	}
 
 	rand.Seed(params.Seed)
+	db.Eval()  // Use only pre-calculated values in DB
 	playGame(db, params.NumPlayers)
 }
 
@@ -63,9 +64,6 @@ func playGame(db farkle.DB, numPlayers int) {
 
 			optAction, pWinOpt := farkle.SelectAction(state, rollID, db)
 			pOpt := pWinOpt[0]
-			if !optAction.ContinueRolling {
-				pOpt = pWinOpt[numPlayers-1]
-			}
 			selectedState := farkle.ApplyAction(state, action)
 			pWinAction := farkle.CalculateWinProb(selectedState, db)
 			pAction := pWinAction[0]
@@ -73,7 +71,7 @@ func playGame(db farkle.DB, numPlayers int) {
 				pAction = pWinAction[numPlayers-1]
 			}
 			if pAction >= pOpt {
-				fmt.Println("...selected action is optimal!")
+				fmt.Printf("...selected action is optimal! (pWin = %f)\n", pAction)
 			} else {
 				fmt.Printf("...optimal action was %s with pWin = %f\n",
 					optAction, pOpt)
@@ -81,9 +79,11 @@ func playGame(db farkle.DB, numPlayers int) {
 					pAction, pAction-pOpt)
 			}
 		} else { // CP
-			time.Sleep(500 * time.Millisecond)  // Thinking
-			action, _ = farkle.SelectAction(state, rollID, db)
-			fmt.Printf("...selected action %s\n", action)
+			fmt.Printf("...score this round = %d\n", int(state.ScoreThisRound)*50)
+			time.Sleep(time.Second) // Thinking
+			selected, pWin := farkle.SelectAction(state, rollID, db)
+			fmt.Printf("...selected action %s (pWin = %f)\n", selected, pWin[0])
+			action = selected
 		}
 
 		state = farkle.ApplyAction(state, action)
