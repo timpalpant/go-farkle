@@ -36,8 +36,8 @@ func main() {
 
 	for i := 0; i < params.NumIter; i++ {
 		glog.Infof("Starting value iteration cycle %d", i)
-		db.Train() // Clear "is calculated" bit for all states
-		winProb := farkle.CalculateWinProb(initialState, db)
+		farkle.UpdateAll(db)
+		winProb := db.Get(initialState)
 		glog.Infof("Probability of winning: %v", winProb)
 	}
 

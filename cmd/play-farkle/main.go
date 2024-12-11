@@ -33,7 +33,6 @@ func main() {
 	}
 
 	rand.Seed(params.Seed)
-	db.Eval()  // Use only pre-calculated values in DB
 	playGame(db, params.NumPlayers)
 }
 
@@ -65,7 +64,7 @@ func playGame(db farkle.DB, numPlayers int) {
 			optAction, pWinOpt := farkle.SelectAction(state, rollID, db)
 			pOpt := pWinOpt[0]
 			selectedState := farkle.ApplyAction(state, action)
-			pWinAction := farkle.CalculateWinProb(selectedState, db)
+			pWinAction := db.Get(selectedState)
 			pAction := pWinAction[0]
 			if !action.ContinueRolling {
 				pAction = pWinAction[numPlayers-1]

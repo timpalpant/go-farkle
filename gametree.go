@@ -85,7 +85,7 @@ func SelectAction(state GameState, rollID uint16, db DB) (Action, [maxNumPlayers
 			continue
 		}
 
-		pSubtree := CalculateWinProb(newState, db)
+		pSubtree := db.Get(newState)
 		if !action.ContinueRolling {
 			// Probabilities are rotated since we advanced to the
 			// next player in next state.
@@ -99,7 +99,7 @@ func SelectAction(state GameState, rollID uint16, db DB) (Action, [maxNumPlayers
 
 	if len(potentialActions) == 0 {
 		newState := ApplyAction(state, bestAction)
-		pSubtree := CalculateWinProb(newState, db)
+		pSubtree := db.Get(newState)
 		bestWinProb = unrotate(pSubtree, state.NumPlayers)
 	}
 
@@ -125,50 +125,58 @@ var rollIDToPotentialActions = func() [][]Action {
 	return result
 }()
 
-// Calculate the value of a given game state by recursively propagating
-// all possitlbe actions forward. Save the result in `db`.
-func CalculateWinProb(state GameState, db DB) [maxNumPlayers]float64 {
-	if state.IsGameOver() {
-		winningScore := state.HighestScore()
-		winners := make([]int, 0, maxNumPlayers)
-		for player, score := range state.PlayerScores[:state.NumPlayers] {
-			if score == winningScore {
-				winners = append(winners, player)
+func UpdateAll(db DB) {
+	numPlayers := db.NumPlayers()
+	for _, playerScores := range allPossibleScores(numPlayers) {
+		for scoreThisRound := uint8(math.MaxUint8); scoreThisRound >= scoreThisRound; scoreThisRound-- {
+			for numDiceToRoll := uint8(1); numDiceToRoll <= MaxNumDice; numDiceToRoll++ {
+				state := GameState{
+					ScoreThisRound: scoreThisRound,
+					NumDiceToRoll:  numDiceToRoll,
+					NumPlayers:     numPlayers,
+					PlayerScores:   playerScores,
+				}
+
+				pWin := [maxNumPlayers]float64{}
+				for _, wRoll := range allRolls[state.NumDiceToRoll] {
+					_, pSubgame := SelectAction(state, wRoll.ID, db)
+					for i, p := range pSubgame[:state.NumPlayers] {
+						pWin[i] += wRoll.Prob * p
+					}
+				}
+
+				db.Put(state, pWin)
 			}
 		}
+	}
+}
 
-		// Not clear how ties should be considered in terms of "win probability".
-		// We split the win amongst all players with the same score.
-		var result [maxNumPlayers]float64
-		p := 1.0 / float64(len(winners))
-		for _, winner := range winners {
-			result[winner] = p
-		}
-		return result
+// Enumerate all possible combinations of N-player scores, in descending order.
+// We sort descending so that end game states (mostly) get processed first,
+// accelerating convergence of earlier game states.
+func allPossibleScores(numPlayers uint8) [][maxNumPlayers]uint8 {
+	if numPlayers == 0 {
+		return [][maxNumPlayers]uint8{{}}
 	}
 
-	pWin, ok := db.Get(state)
-	if ok {
-		return pWin
-	}
-
-	// With non-zero probability, all players will Farkle in a row, resulting
-	// in recursing to the same game state. We need to perform value iteration
-	// until the policy converges. Put the current value now to mark it as "calculated"
-	// and prevent infinite recursion.
-	db.Put(state, pWin)
-
-	pWin = [maxNumPlayers]float64{}
-	for _, wRoll := range allRolls[state.NumDiceToRoll] {
-		_, pSubgame := SelectAction(state, wRoll.ID, db)
-		for i, p := range pSubgame[:state.NumPlayers] {
-			pWin[i] += wRoll.Prob * p
+	n := pow(math.MaxUint8, numPlayers)
+	result := make([][maxNumPlayers]uint8, 0, n)
+	for _, scores := range allPossibleScores(numPlayers - 1) {
+		for score := math.MaxUint8; score >= 0; score-- {
+			scores[numPlayers-1] = uint8(score)
+			result = append(result, scores)
 		}
 	}
 
-	// Put the updated value into the database.
-	db.Put(state, pWin)
-	return pWin
+	return result
+}
+
+func pow(m, n uint8) int {
+	result := 1
+	for i := uint8(1); i <= n; i++ {
+		result *= int(m)
+	}
+	return result
 }
 
 func unrotate(pWin [maxNumPlayers]float64, numPlayers uint8) [maxNumPlayers]float64 {

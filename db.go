@@ -14,22 +14,21 @@ import (
 )
 
 type DB interface {
+	NumPlayers() uint8
 	// Store the result for a game state in the database.
 	Put(state GameState, pWin [maxNumPlayers]float64)
 	// Retrieve a stored result for the given game state.
-	// Returns the result (if found), and a bool indicating whether or not it was found.
-	Get(state GameState) ([maxNumPlayers]float64, bool)
+	Get(state GameState) [maxNumPlayers]float64
 	io.Closer
 }
 
 // DB that stores results in a memory-mapped flat file.
 type FileDB struct {
-	f          *os.File
-	mask       []uint64
-	mmap       []byte
 	numPlayers int
+	f          *os.File
 
-	nPuts int
+	mmap  []byte
+	nPuts int64
 }
 
 func NewFileDB(path string, numPlayers int) (*FileDB, error) {
@@ -72,7 +71,6 @@ func NewFileDB(path string, numPlayers int) (*FileDB, error) {
 
 	return &FileDB{
 		f:          f,
-		mask:    make([]uint64, numStates/64+1),
 		mmap:       mmap,
 		numPlayers: numPlayers,
 	}, nil
@@ -97,19 +95,19 @@ func initDB(w io.Writer, numStates, numPlayers int) error {
 	return bufW.Flush()
 }
 
+func (db *FileDB) NumPlayers() uint8 {
+	return uint8(db.numPlayers)
+}
+
 func (db *FileDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
 	gsID := calcOffset(gs)
 	idx := 8 * db.numPlayers * gsID
+
 	buf := db.mmap[idx : idx+8*db.numPlayers]
 	for i, p := range pWin[:gs.NumPlayers] {
 		value := math.Float64bits(p)
 		binary.LittleEndian.PutUint64(buf[8*i:8*(i+1)], value)
 	}
-
-	// Mark this GameState as calculated in the bitmask.
-	maskIdx := gsID / 64
-	bitIdx := gsID % 64
-	db.mask[maskIdx] |= (1 << bitIdx)
 
 	db.nPuts++
 	if db.nPuts%100000 == 0 {
@@ -119,36 +117,19 @@ func (db *FileDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
 	}
 }
 
-func (db *FileDB) Get(gs GameState) ([maxNumPlayers]float64, bool) {
+func (db *FileDB) Get(gs GameState) [maxNumPlayers]float64 {
 	gsID := calcOffset(gs)
 	idx := 8 * db.numPlayers * gsID
-	buf := db.mmap[idx : idx+8*db.numPlayers]
 
+	buf := db.mmap[idx : idx+8*db.numPlayers]
 	var result [maxNumPlayers]float64
+
 	for i := 0; i < db.numPlayers; i++ {
 		value := binary.LittleEndian.Uint64(buf[8*i : 8*(i+1)])
 		result[i] = math.Float64frombits(value)
 	}
 
-	maskIdx := gsID / 64
-	bitIdx := gsID % 64
-	isSet := (db.mask[maskIdx] & (1 << bitIdx)) != 0
-
-	return result, isSet
-}
-
-// Mark all states as unset in the database.
-func (db *FileDB) Train() {
-	for i := range db.mask {
-		db.mask[i] = 0
-	}
-}
-
-// Mark all states as set in the database.
-func (db *FileDB) Eval() {
-	for i := range db.mask {
-		db.mask[i] = ^uint64(0)
-	}
+	return result
 }
 
 func (db *FileDB) Close() error {
