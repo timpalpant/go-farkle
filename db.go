@@ -150,13 +150,16 @@ func calcNumDistinctStates(numPlayers int) int {
 }
 
 func calcOffset(gs GameState) int {
-	// First dimension is number of dice to roll.
+	// The array must be arranged so that there is locality in the
+	// mmapped pages as process all states.
+	// First the number of dice to roll.
 	idx := int(gs.NumDiceToRoll-1) << ((gs.NumPlayers + 1) * numScoreBits)
-	// Second dimension is current player score this round.
-	idx += int(gs.ScoreThisRound) << (gs.NumPlayers * numScoreBits)
-	// Remaining dimensions are player scores.
-	for i, score := range gs.PlayerScores[:gs.NumPlayers] {
-		idx += int(score) << (i * numScoreBits)
+	// First dimensions are player scores.
+	numPlayers := int(gs.NumPlayers)
+	for i, score := range gs.PlayerScores[:numPlayers] {
+		idx += int(score) << ((numPlayers-i) * numScoreBits)
 	}
+	// Then current player score this round.
+	idx += int(gs.ScoreThisRound)
 	return idx
 }
