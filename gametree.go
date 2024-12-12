@@ -128,11 +128,34 @@ var rollIDToPotentialActions = func() [][]Action {
 }()
 
 func UpdateAll(db DB) {
-	numWorkers := runtime.NumCPU()
-	scoresCh := make(chan [maxNumPlayers]uint8, 2*numWorkers)
+	// First populate all end game states in the DB.
+	numPlayers := db.NumPlayers()
+	scores := allPossibleScores(numPlayers)
+	scoresCh := make(chan [maxNumPlayers]uint8, len(scores))
+	for _, playerScores := range scores {
+		scoresCh <- playerScores
 
+		for scoreThisRound := math.MaxUint8; scoreThisRound >= 0; scoreThisRound-- {
+			for numDiceToRoll := uint8(1); numDiceToRoll <= MaxNumDice; numDiceToRoll++ {
+				state := GameState{
+					ScoreThisRound: uint8(scoreThisRound),
+					NumDiceToRoll:  numDiceToRoll,
+					NumPlayers:     numPlayers,
+					PlayerScores:   playerScores,
+				}
+
+				if state.IsGameOver() {
+					pWin := calcEndGameValue(state)
+					db.Put(state, pWin)
+				}
+			}
+		}
+	}
+
+	// Recalculate all other states.
 	var mx sync.Mutex
 	var wg sync.WaitGroup
+	numWorkers := runtime.NumCPU()
 	wg.Add(numWorkers)
 	for i := 0; i < numWorkers; i++ {
 		go func() {
@@ -141,11 +164,7 @@ func UpdateAll(db DB) {
 		}()
 	}
 
-	for _, playerScores := range allPossibleScores(db.NumPlayers()) {
-		scoresCh <- playerScores
-	}
 	close(scoresCh)
-
 	wg.Wait()
 }
 
@@ -166,14 +185,11 @@ func updateWorker(db DB, scoresCh <-chan [maxNumPlayers]uint8, mx *sync.Mutex) {
 					PlayerScores:   playerScores,
 				}
 
-				pWin := [maxNumPlayers]float64{}
-				for _, wRoll := range allRolls[state.NumDiceToRoll] {
-					_, pSubgame := SelectAction(state, wRoll.ID, db)
-					for i, p := range pSubgame[:state.NumPlayers] {
-						pWin[i] += wRoll.Prob * p
-					}
+				if state.IsGameOver() {
+					continue
 				}
 
+				pWin := calcStateValue(state, db)
 				pendingStates = append(pendingStates, state)
 				pendingResults = append(pendingResults, pWin)
 			}
@@ -185,6 +201,38 @@ func updateWorker(db DB, scoresCh <-chan [maxNumPlayers]uint8, mx *sync.Mutex) {
 		}
 		mx.Unlock()
 	}
+}
+
+func calcEndGameValue(state GameState) [maxNumPlayers]float64 {
+	winningScore := state.HighestScore()
+	winners := make([]int, 0, maxNumPlayers)
+	for player, score := range state.PlayerScores[:state.NumPlayers] {
+			if score == winningScore {
+					winners = append(winners, player)
+			}
+	}
+
+	// Not clear how ties should be considered in terms of "win probability".
+	// We split the win amongst all players with the same score.
+	p := 1.0 / float64(len(winners))
+	var result [maxNumPlayers]float64
+	for _, winner := range winners {
+			result[winner] = p
+	}
+
+	return result
+}
+
+func calcStateValue(state GameState, db DB) [maxNumPlayers]float64 {
+	var pWin [maxNumPlayers]float64
+	for _, wRoll := range allRolls[state.NumDiceToRoll] {
+		_, pSubgame := SelectAction(state, wRoll.ID, db)
+		for i, p := range pSubgame[:state.NumPlayers] {
+			pWin[i] += wRoll.Prob * p
+		}
+	}
+
+	return pWin
 }
 
 // Enumerate all possible combinations of N-player scores, in descending order.
