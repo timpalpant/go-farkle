@@ -153,7 +153,7 @@ func UpdateAll(db DB) {
 	}
 
 	// Recalculate all other states.
-	var mx sync.Mutex
+	var mx sync.RWMutex
 	var wg sync.WaitGroup
 	numWorkers := runtime.NumCPU()
 	wg.Add(numWorkers)
@@ -168,7 +168,7 @@ func UpdateAll(db DB) {
 	wg.Wait()
 }
 
-func updateWorker(db DB, scoresCh <-chan [maxNumPlayers]uint8, mx *sync.Mutex) {
+func updateWorker(db DB, scoresCh <-chan [maxNumPlayers]uint8, mx *sync.RWMutex) {
 	numPlayers := db.NumPlayers()
 	numStatesPerIter := math.MaxUint8 * MaxNumDice
 	pendingStates := make([]GameState, numStatesPerIter)
@@ -189,7 +189,9 @@ func updateWorker(db DB, scoresCh <-chan [maxNumPlayers]uint8, mx *sync.Mutex) {
 					continue
 				}
 
+				mx.RLock()
 				pWin := calcStateValue(state, db)
+				mx.RUnlock()
 				pendingStates = append(pendingStates, state)
 				pendingResults = append(pendingResults, pWin)
 			}
