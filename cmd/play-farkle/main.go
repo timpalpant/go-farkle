@@ -7,7 +7,6 @@ import (
 	"math/rand"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/golang/glog"
 	"github.com/timpalpant/go-farkle"
@@ -55,6 +54,9 @@ func playGame(db farkle.DB, numPlayers int) {
 			if state.CurrentPlayerScore() > 0 || score >= 500/50 {
 				fmt.Printf("...score this round = %d\n", int(score)*50)
 				continueRolling = promptUserToContinue()
+			} else {
+				fmt.Printf("...score this round = %d\n", int(score)*50)
+				fmt.Println("...you must continue rolling until you get at least 500")
 			}
 			action = farkle.Action{
 				HeldDiceID:      farkle.GetRollID(held),
@@ -79,10 +81,10 @@ func playGame(db farkle.DB, numPlayers int) {
 			}
 		} else { // CP
 			fmt.Printf("...score this round = %d\n", int(state.ScoreThisRound)*50)
-			time.Sleep(time.Second) // Thinking
 			selected, pWin := farkle.SelectAction(state, rollID, db)
 			fmt.Printf("...selected action %s (pWin = %f)\n", selected, pWin[0])
 			action = selected
+			fmt.Scanln()
 		}
 
 		state = farkle.ApplyAction(state, action)
