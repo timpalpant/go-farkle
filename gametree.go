@@ -2,13 +2,11 @@ package farkle
 
 import (
 	"fmt"
+	"iter"
 	"math"
 	"runtime"
 	"sync"
 )
-
-const maxValueIter = 20
-const valueTol = 1e-12
 
 // Action is the choice made by a player after rolling.
 // A zero Action is a Farkle.
@@ -108,6 +106,13 @@ func SelectAction(state GameState, rollID uint16, db DB) (Action, [maxNumPlayers
 	return bestAction, bestWinProb
 }
 
+func unrotate(pWin [maxNumPlayers]float64, numPlayers uint8) [maxNumPlayers]float64 {
+	var result [maxNumPlayers]float64
+	copy(result[1:numPlayers], pWin[:numPlayers])
+	result[0] = pWin[numPlayers-1]
+	return result
+}
+
 var rollIDToPotentialActions = func() [][]Action {
 	result := make([][]Action, len(rollIDToPotentialHolds))
 	for rollID, holds := range rollIDToPotentialHolds {
@@ -128,80 +133,54 @@ var rollIDToPotentialActions = func() [][]Action {
 }()
 
 func UpdateAll(db DB) {
-	// First populate all end game states in the DB.
-	numPlayers := db.NumPlayers()
-	scores := allPossibleScores(numPlayers)
-	scoresCh := make(chan [maxNumPlayers]uint8, len(scores))
-	for _, playerScores := range scores {
-		scoresCh <- playerScores
-
-		for scoreThisRound := math.MaxUint8; scoreThisRound >= 0; scoreThisRound-- {
-			for numDiceToRoll := uint8(1); numDiceToRoll <= MaxNumDice; numDiceToRoll++ {
-				state := GameState{
-					ScoreThisRound: uint8(scoreThisRound),
-					NumDiceToRoll:  numDiceToRoll,
-					NumPlayers:     numPlayers,
-					PlayerScores:   playerScores,
-				}
-
-				if state.IsGameOver() {
-					pWin := calcEndGameValue(state)
-					db.Put(state, pWin)
-				}
-			}
-		}
-	}
-
 	// Recalculate all other states.
 	var mx sync.RWMutex
 	var wg sync.WaitGroup
 	numWorkers := runtime.NumCPU()
+	workCh := make(chan GameState, numWorkers)
 	wg.Add(numWorkers)
 	for i := 0; i < numWorkers; i++ {
 		go func() {
-			updateWorker(db, scoresCh, &mx)
+			updateWorker(db, workCh, &mx)
 			wg.Done()
 		}()
 	}
 
-	close(scoresCh)
+	for state := range AllGameStates(db.NumPlayers()) {
+		workCh <- state
+	}
+
+	close(workCh)
 	wg.Wait()
 }
 
-func updateWorker(db DB, scoresCh <-chan [maxNumPlayers]uint8, mx *sync.RWMutex) {
-	numPlayers := db.NumPlayers()
-	numStatesPerIter := math.MaxUint8 * MaxNumDice
-	pendingStates := make([]GameState, numStatesPerIter)
-	pendingResults := make([][maxNumPlayers]float64, numStatesPerIter)
-	for playerScores := range scoresCh {
-		pendingStates = pendingStates[:0]
-		pendingResults = pendingResults[:0]
-		for scoreThisRound := math.MaxUint8; scoreThisRound >= 0; scoreThisRound-- {
-			for numDiceToRoll := uint8(1); numDiceToRoll <= MaxNumDice; numDiceToRoll++ {
-				state := GameState{
-					ScoreThisRound: uint8(scoreThisRound),
-					NumDiceToRoll:  numDiceToRoll,
-					NumPlayers:     numPlayers,
-					PlayerScores:   playerScores,
-				}
+func updateWorker(db DB, workCh <-chan GameState, mx *sync.RWMutex) {
+	numStatesPerIter := math.MaxUint8
+	pendingStates := make([]GameState, 0, numStatesPerIter)
+	pendingResults := make([][maxNumPlayers]float64, 0, numStatesPerIter)
+	for state := range workCh {
+		var pWin [maxNumPlayers]float64
+		if state.IsGameOver() {
+			pWin = calcEndGameValue(state)
+		} else {
+			mx.RLock()
+			pWin = calcStateValue(state, db)
+			mx.RUnlock()
+		}
 
-				if state.IsGameOver() {
-					continue
-				}
+		pendingStates = append(pendingStates, state)
+		pendingResults = append(pendingResults, pWin)
 
-				mx.RLock()
-				pWin := calcStateValue(state, db)
-				mx.RUnlock()
-				pendingStates = append(pendingStates, state)
-				pendingResults = append(pendingResults, pWin)
+		if len(pendingStates) == cap(pendingStates) {
+			mx.Lock()
+			for i, state := range pendingStates {
+				db.Put(state, pendingResults[i])
 			}
-		}
+			mx.Unlock()
 
-		mx.Lock()
-		for i, state := range pendingStates {
-			db.Put(state, pendingResults[i])
+			pendingStates = pendingStates[:0]
+			pendingResults = pendingResults[:0]
 		}
-		mx.Unlock()
 	}
 }
 
@@ -209,9 +188,9 @@ func calcEndGameValue(state GameState) [maxNumPlayers]float64 {
 	winningScore := state.HighestScore()
 	winners := make([]int, 0, maxNumPlayers)
 	for player, score := range state.PlayerScores[:state.NumPlayers] {
-			if score == winningScore {
-					winners = append(winners, player)
-			}
+		if score == winningScore {
+			winners = append(winners, player)
+		}
 	}
 
 	// Not clear how ties should be considered in terms of "win probability".
@@ -219,7 +198,7 @@ func calcEndGameValue(state GameState) [maxNumPlayers]float64 {
 	p := 1.0 / float64(len(winners))
 	var result [maxNumPlayers]float64
 	for _, winner := range winners {
-			result[winner] = p
+		result[winner] = p
 	}
 
 	return result
@@ -237,39 +216,55 @@ func calcStateValue(state GameState, db DB) [maxNumPlayers]float64 {
 	return pWin
 }
 
-// Enumerate all possible combinations of N-player scores, in descending order.
-// We sort descending so that end game states (mostly) get processed first,
-// accelerating convergence of earlier game states.
-func allPossibleScores(numPlayers uint8) [][maxNumPlayers]uint8 {
-	if numPlayers == 0 {
-		return [][maxNumPlayers]uint8{{}}
+func AllGameStates(numPlayers int) iter.Seq[GameState] {
+	return func(yield func(GameState) bool) {
+		initialState := NewGameState(numPlayers)
+		mask := newBitMask(calcNumDistinctStates(numPlayers))
+		recursiveEnumerateStates(initialState, mask, yield)
+	}
+}
+
+func recursiveEnumerateStates(state GameState, mask *bitMask, yield func(GameState) bool) bool {
+	gsID := state.ID()
+	if mask.IsSet(gsID) {
+		return true
 	}
 
-	n := pow(math.MaxUint8, numPlayers)
-	result := make([][maxNumPlayers]uint8, 0, n)
-	for _, scores := range allPossibleScores(numPlayers - 1) {
-		for score := math.MaxUint8; score >= 0; score-- {
-			scores[numPlayers-1] = uint8(score)
-			result = append(result, scores)
+	mask.Set(gsID)
+	if state.IsGameOver() {
+		return yield(state)
+	}
+
+	notYetOnBoard := (state.PlayerScores[0] == 0)
+	for _, wRoll := range allRolls[state.NumDiceToRoll] {
+		potentialActions := rollIDToPotentialActions[wRoll.ID]
+		for _, action := range potentialActions {
+			if state.ScoreThisRound == math.MaxUint8 && action.ContinueRolling {
+				// Overflowed score this round. Our assumption is that this is unlikely.
+				// Approximate the solution using the probability as if they stopped.
+				action.ContinueRolling = false
+			}
+
+			newState := ApplyAction(state, action)
+			if notYetOnBoard && !action.ContinueRolling && newState.PlayerScores[state.NumPlayers-1] < 500/incr {
+				// Not a valid state: You must get at least 500 to get on the board.
+				continue
+			}
+
+			if !recursiveEnumerateStates(newState, mask, yield) {
+				return false
+			}
+		}
+
+		if len(potentialActions) == 0 {
+			newState := ApplyAction(state, Action{})
+			if !recursiveEnumerateStates(newState, mask, yield) {
+				return false
+			}
 		}
 	}
 
-	return result
-}
-
-func pow(m, n uint8) int {
-	result := 1
-	for i := uint8(1); i <= n; i++ {
-		result *= int(m)
-	}
-	return result
-}
-
-func unrotate(pWin [maxNumPlayers]float64, numPlayers uint8) [maxNumPlayers]float64 {
-	var result [maxNumPlayers]float64
-	copy(result[1:numPlayers], pWin[:numPlayers])
-	result[0] = pWin[numPlayers-1]
-	return result
+	return yield(state)
 }
 
 func init() {

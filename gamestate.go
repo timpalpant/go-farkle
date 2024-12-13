@@ -39,6 +39,23 @@ func (gs GameState) String() string {
 		gs.NumDiceToRoll, incr*int(gs.ScoreThisRound), scores[:gs.NumPlayers])
 }
 
+// A unique ID for this game state within the set of all
+// possible games with a certain number of players.
+func (gs GameState) ID() int {
+	// The IDs should be arranged so that there is locality in the
+	// as process all states.
+	// First the number of dice to roll.
+	idx := int(gs.NumDiceToRoll-1) << ((gs.NumPlayers + 1) * numScoreBits)
+	// First dimensions are player scores.
+	numPlayers := int(gs.NumPlayers)
+	for i, score := range gs.PlayerScores[:numPlayers] {
+		idx += int(score) << ((numPlayers - i) * numScoreBits)
+	}
+	// Then current player score this round.
+	idx += int(gs.ScoreThisRound)
+	return idx
+}
+
 // Whether the game is over, i.e. this is a terminal game state.
 func (gs GameState) IsGameOver() bool {
 	// After a player exceeds the score to win, other players get one more turn.
@@ -79,4 +96,8 @@ func (gs GameState) HighestScore() uint8 {
 		}
 	}
 	return bestScore
+}
+
+func calcNumDistinctStates(numPlayers int) int {
+	return MaxNumDice << ((numPlayers + 1) * numScoreBits)
 }

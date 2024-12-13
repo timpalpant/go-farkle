@@ -14,7 +14,7 @@ import (
 )
 
 type DB interface {
-	NumPlayers() uint8
+	NumPlayers() int
 	// Store the result for a game state in the database.
 	Put(state GameState, pWin [maxNumPlayers]float64)
 	// Retrieve a stored result for the given game state.
@@ -95,12 +95,12 @@ func initDB(w io.Writer, numStates, numPlayers int) error {
 	return bufW.Flush()
 }
 
-func (db *FileDB) NumPlayers() uint8 {
-	return uint8(db.numPlayers)
+func (db *FileDB) NumPlayers() int {
+	return db.numPlayers
 }
 
 func (db *FileDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
-	gsID := calcOffset(gs)
+	gsID := gs.ID()
 	idx := 8 * db.numPlayers * gsID
 
 	buf := db.mmap[idx : idx+8*db.numPlayers]
@@ -118,7 +118,7 @@ func (db *FileDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
 }
 
 func (db *FileDB) Get(gs GameState) [maxNumPlayers]float64 {
-	gsID := calcOffset(gs)
+	gsID := gs.ID()
 	idx := 8 * db.numPlayers * gsID
 
 	buf := db.mmap[idx : idx+8*db.numPlayers]
@@ -143,23 +143,4 @@ func (db *FileDB) Close() error {
 	}
 
 	return db.f.Close()
-}
-
-func calcNumDistinctStates(numPlayers int) int {
-	return MaxNumDice << ((numPlayers + 1) * numScoreBits)
-}
-
-func calcOffset(gs GameState) int {
-	// The array must be arranged so that there is locality in the
-	// mmapped pages as process all states.
-	// First the number of dice to roll.
-	idx := int(gs.NumDiceToRoll-1) << ((gs.NumPlayers + 1) * numScoreBits)
-	// First dimensions are player scores.
-	numPlayers := int(gs.NumPlayers)
-	for i, score := range gs.PlayerScores[:numPlayers] {
-		idx += int(score) << ((numPlayers-i) * numScoreBits)
-	}
-	// Then current player score this round.
-	idx += int(gs.ScoreThisRound)
-	return idx
 }
