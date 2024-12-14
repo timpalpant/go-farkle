@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/bsm/extsort"
+	"github.com/golang/glog"
 )
 
 // Action is the choice made by a player after rolling.
@@ -138,6 +139,8 @@ var rollIDToPotentialActions = func() [][]Action {
 	return result
 }()
 
+// Recalculate the value of all states in the given iterator,
+// updating the value of each state in the database.
 func UpdateAll(db DB, states iter.Seq2[uint16, GameState]) {
 	// Recalculate all other states.
 	var mx sync.RWMutex
@@ -152,6 +155,7 @@ func UpdateAll(db DB, states iter.Seq2[uint16, GameState]) {
 			wg.Wait()
 
 			// Start up workers for next depth.
+			glog.Infof("Processing game states with depth=%d", depth)
 			workCh = make(chan GameState, numWorkers)
 			wg.Add(numWorkers)
 			for i := 0; i < numWorkers; i++ {
@@ -170,6 +174,7 @@ func UpdateAll(db DB, states iter.Seq2[uint16, GameState]) {
 }
 
 func updateWorker(db DB, workCh <-chan GameState, mx *sync.RWMutex) {
+	// We batch updates to the database to reduce lock contention.
 	batchSize := 1024 // Arbitrary, tunable
 	batchStates := make([]GameState, batchSize)
 	batchUpdates := make([][maxNumPlayers]float64, batchSize)
@@ -235,6 +240,7 @@ func calcStateValue(state GameState, db DB) [maxNumPlayers]float64 {
 	return pWin
 }
 
+// Save all game states from the given iterator to a file.
 func SaveGameStates(states iter.Seq2[uint16, GameState], path string) error {
 	f, err := os.Create(path)
 	if err != nil {
@@ -243,12 +249,19 @@ func SaveGameStates(states iter.Seq2[uint16, GameState], path string) error {
 	defer f.Close()
 	w := bufio.NewWriterSize(f, 4*1024*1024)
 
+	glog.Infof("Saving game states to: %s", path)
 	buf := make([]byte, maxSizeOfGameState+2)
+	i := 0
 	for depth, state := range states {
 		binary.LittleEndian.PutUint16(buf[:2], depth)
 		n := state.SerializeTo(buf[1:])
 		if _, err := w.Write(buf[:n+1]); err != nil {
 			return err
+		}
+
+		i++
+		if i%100000 == 0 {
+			glog.Infof("...%d", i)
 		}
 	}
 
@@ -259,6 +272,7 @@ func SaveGameStates(states iter.Seq2[uint16, GameState], path string) error {
 	return f.Close()
 }
 
+// Return an iterator over all game states in the given file.
 func IterGameStates(numPlayers int, path string) (iter.Seq2[uint16, GameState], error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -287,6 +301,9 @@ func IterGameStates(numPlayers int, path string) (iter.Seq2[uint16, GameState], 
 	}, nil
 }
 
+// Return an iterator over all distinct game states and their depth in the game tree.
+// Game states are sorted by depth in descending order such that end game states
+// are enumerated before early game states.
 func SortedGameStates(numPlayers int, workDir string) iter.Seq2[uint16, GameState] {
 	sorter := extsort.New(&extsort.Options{
 		WorkDir:    workDir,
@@ -294,6 +311,9 @@ func SortedGameStates(numPlayers int, workDir string) iter.Seq2[uint16, GameStat
 		BufferSize: 16 * 1024 * 1024, // 16 GiB
 	})
 
+	glog.Infof("Enumerating all %d %d-player game states",
+		calcNumDistinctStates(numPlayers), numPlayers)
+	i := 0
 	for depth, gs := range allGameStates(numPlayers) {
 		if depth > math.MaxUint16 {
 			panic(fmt.Errorf("game state has depth %d > max uint8", depth))
@@ -304,8 +324,14 @@ func SortedGameStates(numPlayers int, workDir string) iter.Seq2[uint16, GameStat
 		value := make([]byte, numPlayers+3)
 		n := gs.SerializeTo(value)
 		sorter.Put(key, value[:n])
+
+		i++
+		if i%100000 == 0 {
+			glog.Infof("...%d", i)
+		}
 	}
 
+	glog.Info("Sorting game states by depth")
 	iter, err := sorter.Sort()
 	if err != nil {
 		panic(fmt.Errorf("error sorting game states: %w", err))
@@ -345,6 +371,8 @@ func compareGameStateDepth(d1, d2 []byte) int {
 	return 1
 }
 
+// Return an iterator over all distinct game states, and their minimum
+// depth in the game tree.
 func allGameStates(numPlayers int) iter.Seq2[int, GameState] {
 	return func(yield func(int, GameState) bool) {
 		initialState := NewGameState(numPlayers)
