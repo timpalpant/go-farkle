@@ -92,7 +92,7 @@ func SelectAction(state GameState, rollID uint16, db DB) (Action, [maxNumPlayers
 			continue
 		}
 
-		pSubtree := db.Get(newState)
+		pSubtree := db.Get(newState.ID())
 		if !action.ContinueRolling {
 			// Probabilities are rotated since we advanced to the
 			// next player in next state.
@@ -106,7 +106,7 @@ func SelectAction(state GameState, rollID uint16, db DB) (Action, [maxNumPlayers
 
 	if len(potentialActions) == 0 {
 		newState := ApplyAction(state, bestAction)
-		pSubtree := db.Get(newState)
+		pSubtree := db.Get(newState.ID())
 		bestWinProb = unrotate(pSubtree, state.NumPlayers)
 	}
 
@@ -177,7 +177,7 @@ func UpdateAll(db DB, states iter.Seq2[uint16, GameState]) {
 func updateWorker(db DB, workCh <-chan GameState, mx *sync.RWMutex) {
 	// We batch updates to the database to reduce lock contention.
 	batchSize := 1024 // Arbitrary, tunable
-	batchStates := make([]GameState, 0, batchSize)
+	batchIDs := make([]int, 0, batchSize)
 	batchUpdates := make([][maxNumPlayers]float64, 0, batchSize)
 	for state := range workCh {
 		var pWin [maxNumPlayers]float64
@@ -189,23 +189,23 @@ func updateWorker(db DB, workCh <-chan GameState, mx *sync.RWMutex) {
 			mx.RUnlock()
 		}
 
-		batchStates = append(batchStates, state)
+		batchIDs = append(batchIDs, state.ID())
 		batchUpdates = append(batchUpdates, pWin)
-		if len(batchStates) == cap(batchStates) {
+		if len(batchIDs) == cap(batchIDs) {
 			mx.Lock()
-			for i, state := range batchStates {
-				db.Put(state, batchUpdates[i])
+			for i, id := range batchIDs {
+				db.Put(id, batchUpdates[i])
 			}
 			mx.Unlock()
-			batchStates = batchStates[:0]
+			batchIDs = batchIDs[:0]
 			batchUpdates = batchUpdates[:0]
 		}
 	}
 
 	mx.Lock()
 	defer mx.Unlock()
-	for i, state := range batchStates {
-		db.Put(state, batchUpdates[i])
+	for i, id := range batchIDs {
+		db.Put(id, batchUpdates[i])
 	}
 }
 
@@ -315,7 +315,7 @@ func SortedGameStates(numPlayers int, workDir string) iter.Seq2[uint16, GameStat
 	glog.Infof("Enumerating all %d %d-player game states",
 		calcNumDistinctStates(numPlayers), numPlayers)
 	i := 0
-	for depth, gs := range allGameStates(numPlayers) {
+	for depth, gs := range allGameStates(numPlayers, workDir) {
 		if depth > math.MaxUint16 {
 			panic(fmt.Errorf("game state has depth %d > max uint8", depth))
 		}
@@ -365,7 +365,7 @@ func compareGameStateDepth(d1, d2 []byte) int {
 	m := binary.LittleEndian.Uint16(d1)
 	n := binary.LittleEndian.Uint16(d2)
 
-	if m > n {
+	if m < n {
 		return -1
 	} else if m == n {
 		return 0
@@ -374,31 +374,47 @@ func compareGameStateDepth(d1, d2 []byte) int {
 	return 1
 }
 
-// Return an iterator over all distinct game states, and their minimum
-// depth in the game tree.
-func allGameStates(numPlayers int) iter.Seq2[int, GameState] {
+// Return an iterator over all distinct game states, and their
+// depth in the game tree. Depth=0 is an endgame state. Non-endgame
+// states have a depth 1 greater than all of their child subgames.
+func allGameStates(numPlayers int, workDir string) iter.Seq2[int, GameState] {
 	return func(yield func(int, GameState) bool) {
 		initialState := NewGameState(numPlayers)
 		inStack := newBitMask(calcNumDistinctStates(numPlayers))
-		emitted := newBitMask(calcNumDistinctStates(numPlayers))
-		recursiveEnumerateStates(initialState, inStack, emitted, 0, yield)
+		depthFile, err := os.CreateTemp(workDir, fmt.Sprintf("depthmap-%dplayer-*.mmap", numPlayers))
+		if err != nil {
+			panic(fmt.Errorf("unable to initialize depth map: %w", err))
+		}
+		defer os.Remove(depthFile.Name())
+		depthFile.Close()
+		depthMap, err := newDepthMap(depthFile.Name(), calcNumDistinctStates(numPlayers))
+		if err != nil {
+			panic(fmt.Errorf("unable to initialize depth map: %w", err))
+		}
+		defer depthMap.Close()
+		recursiveEnumerateStates(initialState, inStack, depthMap, yield)
 	}
 }
 
-func recursiveEnumerateStates(state GameState, inStack, emitted *bitMask, depth int, yield func(int, GameState) bool) bool {
+func recursiveEnumerateStates(state GameState, inStack *bitMask, depthMap *depthMap, yield func(int, GameState) bool) (int, bool) {
 	if state.IsGameOver() {
-		return true
+		return 0, true
 	}
 
 	// Only recurse beyond this state once.
 	gsID := state.ID()
+	depth := depthMap.Get(gsID)
+	if depth > 0 {
+		return depth, true
+	}
 	if inStack.IsSet(gsID) {
-		return true
+		return depth, true
 	}
 	inStack.Set(gsID)
 	defer inStack.Clear(gsID)
 
 	notYetOnBoard := (state.PlayerScores[0] == 0)
+	maxChildDepth := 0
 	for _, wRoll := range allRolls[state.NumDiceToRoll] {
 		potentialActions := rollIDToPotentialActions[wRoll.ID]
 		for _, action := range potentialActions {
@@ -414,24 +430,26 @@ func recursiveEnumerateStates(state GameState, inStack, emitted *bitMask, depth 
 				continue
 			}
 
-			if !recursiveEnumerateStates(newState, inStack, emitted, depth+1, yield) {
-				return false
+			depth, ok := recursiveEnumerateStates(newState, inStack, depthMap, yield)
+			maxChildDepth = max(maxChildDepth, depth)
+			if !ok {
+				return maxChildDepth, false
 			}
 		}
 
 		if len(potentialActions) == 0 {
 			newState := ApplyAction(state, Action{})
-			if !recursiveEnumerateStates(newState, inStack, emitted, depth+1, yield) {
-				return false
+			depth, ok := recursiveEnumerateStates(newState, inStack, depthMap, yield)
+			maxChildDepth = max(maxChildDepth, depth)
+			if !ok {
+				return maxChildDepth, false
 			}
 		}
 	}
 
-	if emitted.IsSet(gsID) {
-		return true
-	}
-	emitted.Set(gsID)
-	return yield(depth, state)
+	depth = maxChildDepth + 1
+	depthMap.Set(gsID, depth)
+	return depth, yield(depth, state)
 }
 
 func init() {

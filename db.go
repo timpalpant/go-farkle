@@ -17,9 +17,9 @@ type DB interface {
 	// The number of game players.
 	NumPlayers() int
 	// Store the result for a game state in the database.
-	Put(state GameState, pWin [maxNumPlayers]float64)
+	Put(gsId int, pWin [maxNumPlayers]float64)
 	// Retrieve a stored result for the given game state.
-	Get(state GameState) [maxNumPlayers]float64
+	Get(gsID int) [maxNumPlayers]float64
 	io.Closer
 }
 
@@ -117,12 +117,11 @@ func (db *FileDB) NumPlayers() int {
 	return db.numPlayers
 }
 
-func (db *FileDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
-	gsID := gs.ID()
+func (db *FileDB) Put(gsID int, pWin [maxNumPlayers]float64) {
 	idx := 8 * db.numPlayers * gsID
 
 	buf := db.mmap[idx : idx+8*db.numPlayers]
-	for i, p := range pWin[:gs.NumPlayers] {
+	for i, p := range pWin[:db.numPlayers] {
 		value := math.Float64bits(p)
 		binary.LittleEndian.PutUint64(buf[8*i:8*(i+1)], value)
 	}
@@ -130,13 +129,12 @@ func (db *FileDB) Put(gs GameState, pWin [maxNumPlayers]float64) {
 	db.nPuts++
 	if db.nPuts%100000 == 0 {
 		glog.Infof(
-			"%d puts into database. Last put: %s -> %v",
-			db.nPuts, gs, pWin[:gs.NumPlayers])
+			"%d puts into database. Last put: %d -> %v",
+			db.nPuts, gsID, pWin[:db.numPlayers])
 	}
 }
 
-func (db *FileDB) Get(gs GameState) [maxNumPlayers]float64 {
-	gsID := gs.ID()
+func (db *FileDB) Get(gsID int) [maxNumPlayers]float64 {
 	idx := 8 * db.numPlayers * gsID
 
 	buf := db.mmap[idx : idx+8*db.numPlayers]

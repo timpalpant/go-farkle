@@ -5,7 +5,7 @@ type bitMask struct {
 }
 
 func newBitMask(n int) *bitMask {
-	numInts := n / 64 + 1
+	numInts := n/64 + 1
 	return &bitMask{
 		values: make([]uint64, numInts),
 	}

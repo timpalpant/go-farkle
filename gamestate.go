@@ -74,10 +74,10 @@ func GameStateFromID(numPlayers, id int) GameState {
 	}
 
 	return GameState{
-		NumDiceToRoll: uint8(id >> ((numPlayers+1)*numScoreBits)),
+		NumDiceToRoll:  uint8(id >> ((numPlayers + 1) * numScoreBits)),
 		ScoreThisRound: uint8(id & 0xff),
-		NumPlayers: uint8(numPlayers),
-		PlayerScores: playerScores,
+		NumPlayers:     uint8(numPlayers),
+		PlayerScores:   playerScores,
 	}
 }
 
@@ -121,13 +121,6 @@ func (gs GameState) HighestScore() uint8 {
 		}
 	}
 	return bestScore
-}
-
-func (gs GameState) ToBytes() []byte {
-	nBytes := gs.NumPlayers + 3
-	buf := make([]byte, nBytes)
-	n := gs.SerializeTo(buf)
-	return buf[:n]
 }
 
 func (gs GameState) SerializeTo(buf []byte) int {
