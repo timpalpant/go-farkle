@@ -320,11 +320,12 @@ func SortedGameStates(numPlayers int, workDir string) iter.Seq2[uint16, GameStat
 			panic(fmt.Errorf("game state has depth %d > max uint8", depth))
 		}
 
-		key := make([]byte, 2)
-		binary.LittleEndian.PutUint16(key, uint16(depth))
-		value := make([]byte, numPlayers+3)
-		n := gs.SerializeTo(value)
-		sorter.Put(key, value[:n])
+		data := make([]byte, maxSizeOfGameState+2)
+		binary.LittleEndian.PutUint16(data[:2], uint16(depth))
+		n := gs.SerializeTo(data[2:])
+		if err := sorter.Append(data[:n+2]); err != nil {
+			panic(fmt.Errorf("error sorting states: %w", err))
+		}
 
 		i++
 		if i%100000 == 0 {
@@ -340,8 +341,9 @@ func SortedGameStates(numPlayers int, workDir string) iter.Seq2[uint16, GameStat
 
 	return func(yield func(uint16, GameState) bool) {
 		for iter.Next() {
-			depth := binary.LittleEndian.Uint16(iter.Key())
-			state := GameStateFromBytes(iter.Value())
+			data := iter.Data()
+			depth := binary.LittleEndian.Uint16(data[:2])
+			state := GameStateFromBytes(data[2:])
 			if !yield(depth, state) {
 				break
 			}
@@ -377,21 +379,24 @@ func compareGameStateDepth(d1, d2 []byte) int {
 func allGameStates(numPlayers int) iter.Seq2[int, GameState] {
 	return func(yield func(int, GameState) bool) {
 		initialState := NewGameState(numPlayers)
-		mask := newBitMask(calcNumDistinctStates(numPlayers))
-		recursiveEnumerateStates(initialState, mask, 0, yield)
+		inStack := newBitMask(calcNumDistinctStates(numPlayers))
+		emitted := newBitMask(calcNumDistinctStates(numPlayers))
+		recursiveEnumerateStates(initialState, inStack, emitted, 0, yield)
 	}
 }
 
-func recursiveEnumerateStates(state GameState, mask *bitMask, depth int, yield func(int, GameState) bool) bool {
-	gsID := state.ID()
-	if mask.IsSet(gsID) {
+func recursiveEnumerateStates(state GameState, inStack, emitted *bitMask, depth int, yield func(int, GameState) bool) bool {
+	if state.IsGameOver() {
 		return true
 	}
 
-	mask.Set(gsID)
-	if state.IsGameOver() {
-		return yield(depth, state)
+	// Only recurse beyond this state once.
+	gsID := state.ID()
+	if inStack.IsSet(gsID) {
+		return true
 	}
+	inStack.Set(gsID)
+	defer inStack.Clear(gsID)
 
 	notYetOnBoard := (state.PlayerScores[0] == 0)
 	for _, wRoll := range allRolls[state.NumDiceToRoll] {
@@ -409,19 +414,23 @@ func recursiveEnumerateStates(state GameState, mask *bitMask, depth int, yield f
 				continue
 			}
 
-			if !recursiveEnumerateStates(newState, mask, depth+1, yield) {
+			if !recursiveEnumerateStates(newState, inStack, emitted, depth+1, yield) {
 				return false
 			}
 		}
 
 		if len(potentialActions) == 0 {
 			newState := ApplyAction(state, Action{})
-			if !recursiveEnumerateStates(newState, mask, depth+1, yield) {
+			if !recursiveEnumerateStates(newState, inStack, emitted, depth+1, yield) {
 				return false
 			}
 		}
 	}
 
+	if emitted.IsSet(gsID) {
+		return true
+	}
+	emitted.Set(gsID)
 	return yield(depth, state)
 }
 

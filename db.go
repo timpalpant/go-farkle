@@ -91,9 +91,26 @@ func initDB(w io.Writer, numStates, numPlayers int) error {
 		if i%100000000 == 0 {
 			glog.Infof("...%d", i)
 		}
-		bufW.Write(defaultValue)
+
+		state := GameStateFromID(numPlayers, i)
+		if state.IsGameOver() {
+			pWin := calcEndGameValue(state)
+			bufW.Write(encodeValue(pWin[:state.NumPlayers]))
+		} else {
+			bufW.Write(defaultValue)
+		}
 	}
 	return bufW.Flush()
+}
+
+func encodeValue(pWin []float64) []byte {
+	result := make([]byte, 8*maxNumPlayers)
+	for i, p := range pWin {
+		buf := result[8*i : 8*(i+1)]
+		bits := math.Float64bits(p)
+		binary.LittleEndian.PutUint64(buf, bits)
+	}
+	return result[:8*len(pWin)]
 }
 
 func (db *FileDB) NumPlayers() int {

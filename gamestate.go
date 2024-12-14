@@ -67,12 +67,26 @@ func (gs GameState) ID() int {
 	return idx
 }
 
+func GameStateFromID(numPlayers, id int) GameState {
+	var playerScores [maxNumPlayers]uint8
+	for i := 0; i < numPlayers; i++ {
+		playerScores[i] = uint8((id >> ((numPlayers - i) * numScoreBits)) & 0xff)
+	}
+
+	return GameState{
+		NumDiceToRoll: uint8(id >> ((numPlayers+1)*numScoreBits)),
+		ScoreThisRound: uint8(id & 0xff),
+		NumPlayers: uint8(numPlayers),
+		PlayerScores: playerScores,
+	}
+}
+
 // Whether the game is over, i.e. this is a terminal game state.
 func (gs GameState) IsGameOver() bool {
 	// After a player exceeds the score to win, other players get one more turn.
 	// Therefore the game is over when we come back around such that the current player
 	// has a score exceeding the threshold.
-	return gs.CurrentPlayerScore() >= scoreToWin
+	return gs.PlayerScores[0] >= scoreToWin
 }
 
 // Score of the current player.
