@@ -145,8 +145,8 @@ func UpdateAll(db DB, states iter.Seq2[uint16, GameState]) {
 	// Recalculate all other states.
 	var mx sync.RWMutex
 	var wg sync.WaitGroup
-	var workCh chan GameState
 	numWorkers := runtime.NumCPU()
+	workCh := make(chan GameState, numWorkers)
 	currentDepth := uint16(0)
 	for depth, state := range states {
 		if depth != currentDepth {
@@ -156,6 +156,7 @@ func UpdateAll(db DB, states iter.Seq2[uint16, GameState]) {
 
 			// Start up workers for next depth.
 			glog.Infof("Processing game states with depth=%d", depth)
+			currentDepth = depth
 			workCh = make(chan GameState, numWorkers)
 			wg.Add(numWorkers)
 			for i := 0; i < numWorkers; i++ {
@@ -176,8 +177,8 @@ func UpdateAll(db DB, states iter.Seq2[uint16, GameState]) {
 func updateWorker(db DB, workCh <-chan GameState, mx *sync.RWMutex) {
 	// We batch updates to the database to reduce lock contention.
 	batchSize := 1024 // Arbitrary, tunable
-	batchStates := make([]GameState, batchSize)
-	batchUpdates := make([][maxNumPlayers]float64, batchSize)
+	batchStates := make([]GameState, 0, batchSize)
+	batchUpdates := make([][maxNumPlayers]float64, 0, batchSize)
 	for state := range workCh {
 		var pWin [maxNumPlayers]float64
 		if state.IsGameOver() {
