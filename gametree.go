@@ -254,13 +254,13 @@ func SaveGameStates(states iter.Seq2[uint16, GameState], path string) error {
 	i := 0
 	for depth, state := range states {
 		binary.LittleEndian.PutUint16(buf[:2], depth)
-		n := state.SerializeTo(buf[1:])
-		if _, err := w.Write(buf[:n+1]); err != nil {
+		n := state.SerializeTo(buf[2:])
+		if _, err := w.Write(buf[:n+2]); err != nil {
 			return err
 		}
 
 		i++
-		if i%100000 == 0 {
+		if i%10000000 == 0 {
 			glog.Infof("...%d", i)
 		}
 	}
