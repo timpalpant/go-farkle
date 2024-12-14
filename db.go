@@ -14,6 +14,7 @@ import (
 )
 
 type DB interface {
+	// The number of game players.
 	NumPlayers() int
 	// Store the result for a game state in the database.
 	Put(state GameState, pWin [maxNumPlayers]float64)

@@ -6,7 +6,7 @@ import (
 )
 
 const maxNumPlayers = 4
-const sizeOfGameState = maxNumPlayers + 2
+const maxSizeOfGameState = 7
 
 // State of the game. The current player is always player 0.
 // Game states can be partially ordered since scores can only go up during game play.
@@ -27,6 +27,17 @@ func NewGameState(numPlayers int) GameState {
 		NumDiceToRoll: MaxNumDice,
 		NumPlayers:    uint8(numPlayers),
 	}
+}
+
+func GameStateFromBytes(buf []byte) GameState {
+	gs := GameState{
+		ScoreThisRound: buf[0],
+		NumDiceToRoll:  buf[1],
+		NumPlayers:     buf[2],
+	}
+
+	copy(gs.PlayerScores[:gs.NumPlayers], buf[3:])
+	return gs
 }
 
 func (gs GameState) String() string {
@@ -96,6 +107,29 @@ func (gs GameState) HighestScore() uint8 {
 		}
 	}
 	return bestScore
+}
+
+func (gs GameState) ToBytes() []byte {
+	nBytes := gs.NumPlayers + 3
+	buf := make([]byte, nBytes)
+	n := gs.SerializeTo(buf)
+	return buf[:n]
+}
+
+func (gs GameState) SerializeTo(buf []byte) int {
+	nBytes := int(gs.NumPlayers + 3)
+	if len(buf) < nBytes {
+		panic(fmt.Errorf(
+			"cannot serialize GameState: "+
+				"buffer has %d bytes but need %d",
+			len(buf), nBytes))
+	}
+
+	buf[0] = gs.ScoreThisRound
+	buf[1] = gs.NumDiceToRoll
+	buf[2] = gs.NumPlayers
+	copy(buf[3:], gs.PlayerScores[:gs.NumPlayers])
+	return nBytes
 }
 
 func calcNumDistinctStates(numPlayers int) int {

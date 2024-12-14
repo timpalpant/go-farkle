@@ -1,11 +1,17 @@
 package farkle
 
 import (
+	"bufio"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"iter"
 	"math"
+	"os"
 	"runtime"
 	"sync"
+
+	"github.com/bsm/extsort"
 )
 
 // Action is the choice made by a player after rolling.
@@ -132,21 +138,30 @@ var rollIDToPotentialActions = func() [][]Action {
 	return result
 }()
 
-func UpdateAll(db DB) {
+func UpdateAll(db DB, states iter.Seq2[uint16, GameState]) {
 	// Recalculate all other states.
 	var mx sync.RWMutex
 	var wg sync.WaitGroup
+	var workCh chan GameState
 	numWorkers := runtime.NumCPU()
-	workCh := make(chan GameState, numWorkers)
-	wg.Add(numWorkers)
-	for i := 0; i < numWorkers; i++ {
-		go func() {
-			updateWorker(db, workCh, &mx)
-			wg.Done()
-		}()
-	}
+	currentDepth := uint16(0)
+	for depth, state := range states {
+		if depth != currentDepth {
+			// Wait for previous depth to complete.
+			close(workCh)
+			wg.Wait()
 
-	for state := range AllGameStates(db.NumPlayers()) {
+			// Start up workers for next depth.
+			workCh = make(chan GameState, numWorkers)
+			wg.Add(numWorkers)
+			for i := 0; i < numWorkers; i++ {
+				go func() {
+					updateWorker(db, workCh, &mx)
+					wg.Done()
+				}()
+			}
+		}
+
 		workCh <- state
 	}
 
@@ -155,9 +170,9 @@ func UpdateAll(db DB) {
 }
 
 func updateWorker(db DB, workCh <-chan GameState, mx *sync.RWMutex) {
-	numStatesPerIter := math.MaxUint8
-	pendingStates := make([]GameState, 0, numStatesPerIter)
-	pendingResults := make([][maxNumPlayers]float64, 0, numStatesPerIter)
+	batchSize := 1024 // Arbitrary, tunable
+	batchStates := make([]GameState, batchSize)
+	batchUpdates := make([][maxNumPlayers]float64, batchSize)
 	for state := range workCh {
 		var pWin [maxNumPlayers]float64
 		if state.IsGameOver() {
@@ -168,19 +183,23 @@ func updateWorker(db DB, workCh <-chan GameState, mx *sync.RWMutex) {
 			mx.RUnlock()
 		}
 
-		pendingStates = append(pendingStates, state)
-		pendingResults = append(pendingResults, pWin)
-
-		if len(pendingStates) == cap(pendingStates) {
+		batchStates = append(batchStates, state)
+		batchUpdates = append(batchUpdates, pWin)
+		if len(batchStates) == cap(batchStates) {
 			mx.Lock()
-			for i, state := range pendingStates {
-				db.Put(state, pendingResults[i])
+			for i, state := range batchStates {
+				db.Put(state, batchUpdates[i])
 			}
 			mx.Unlock()
-
-			pendingStates = pendingStates[:0]
-			pendingResults = pendingResults[:0]
+			batchStates = batchStates[:0]
+			batchUpdates = batchUpdates[:0]
 		}
+	}
+
+	mx.Lock()
+	defer mx.Unlock()
+	for i, state := range batchStates {
+		db.Put(state, batchUpdates[i])
 	}
 }
 
@@ -216,15 +235,125 @@ func calcStateValue(state GameState, db DB) [maxNumPlayers]float64 {
 	return pWin
 }
 
-func AllGameStates(numPlayers int) iter.Seq[GameState] {
-	return func(yield func(GameState) bool) {
-		initialState := NewGameState(numPlayers)
-		mask := newBitMask(calcNumDistinctStates(numPlayers))
-		recursiveEnumerateStates(initialState, mask, yield)
+func SaveGameStates(states iter.Seq2[uint16, GameState], path string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	w := bufio.NewWriterSize(f, 4*1024*1024)
+
+	buf := make([]byte, maxSizeOfGameState+2)
+	for depth, state := range states {
+		binary.LittleEndian.PutUint16(buf[:2], depth)
+		n := state.SerializeTo(buf[1:])
+		if _, err := w.Write(buf[:n+1]); err != nil {
+			return err
+		}
+	}
+
+	if err := w.Flush(); err != nil {
+		return err
+	}
+
+	return f.Close()
+}
+
+func IterGameStates(numPlayers int, path string) (iter.Seq2[uint16, GameState], error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+
+	return func(yield func(uint16, GameState) bool) {
+		defer f.Close()
+		r := bufio.NewReaderSize(f, 4*1024*1024)
+
+		buf := make([]byte, numPlayers+3+2)
+		for {
+			_, err := io.ReadFull(r, buf)
+			if err == io.EOF {
+				break
+			} else if err != nil {
+				panic(fmt.Errorf("error reading game states: %w", err))
+			}
+
+			depth := binary.LittleEndian.Uint16(buf[:2])
+			state := GameStateFromBytes(buf[2:])
+			if !yield(depth, state) {
+				break
+			}
+		}
+	}, nil
+}
+
+func SortedGameStates(numPlayers int, workDir string) iter.Seq2[uint16, GameState] {
+	sorter := extsort.New(&extsort.Options{
+		WorkDir:    workDir,
+		Compare:    compareGameStateDepth,
+		BufferSize: 16 * 1024 * 1024, // 16 GiB
+	})
+
+	for depth, gs := range allGameStates(numPlayers) {
+		if depth > math.MaxUint16 {
+			panic(fmt.Errorf("game state has depth %d > max uint8", depth))
+		}
+
+		key := make([]byte, 2)
+		binary.LittleEndian.PutUint16(key, uint16(depth))
+		value := make([]byte, numPlayers+3)
+		n := gs.SerializeTo(value)
+		sorter.Put(key, value[:n])
+	}
+
+	iter, err := sorter.Sort()
+	if err != nil {
+		panic(fmt.Errorf("error sorting game states: %w", err))
+	}
+
+	return func(yield func(uint16, GameState) bool) {
+		for iter.Next() {
+			depth := binary.LittleEndian.Uint16(iter.Key())
+			state := GameStateFromBytes(iter.Value())
+			if !yield(depth, state) {
+				break
+			}
+		}
+
+		if err := iter.Err(); err != nil {
+			panic(fmt.Errorf("error sorting game states: %w", err))
+		}
+
+		if err := iter.Close(); err != nil {
+			panic(fmt.Errorf("error sorting game states: %w", err))
+		}
 	}
 }
 
-func recursiveEnumerateStates(state GameState, mask *bitMask, yield func(GameState) bool) bool {
+// Sort game states deeper in the tree before earlier states.
+// i.e. end game -> initial state
+func compareGameStateDepth(d1, d2 []byte) int {
+	m := binary.LittleEndian.Uint16(d1)
+	n := binary.LittleEndian.Uint16(d2)
+
+	if m > n {
+		return -1
+	} else if m == n {
+		return 0
+	}
+
+	return 1
+}
+
+func allGameStates(numPlayers int) iter.Seq2[int, GameState] {
+	return func(yield func(int, GameState) bool) {
+		initialState := NewGameState(numPlayers)
+		mask := newBitMask(calcNumDistinctStates(numPlayers))
+		recursiveEnumerateStates(initialState, mask, 0, yield)
+	}
+}
+
+func recursiveEnumerateStates(state GameState, mask *bitMask, depth int, yield func(int, GameState) bool) bool {
 	gsID := state.ID()
 	if mask.IsSet(gsID) {
 		return true
@@ -232,7 +361,7 @@ func recursiveEnumerateStates(state GameState, mask *bitMask, yield func(GameSta
 
 	mask.Set(gsID)
 	if state.IsGameOver() {
-		return yield(state)
+		return yield(depth, state)
 	}
 
 	notYetOnBoard := (state.PlayerScores[0] == 0)
@@ -251,20 +380,20 @@ func recursiveEnumerateStates(state GameState, mask *bitMask, yield func(GameSta
 				continue
 			}
 
-			if !recursiveEnumerateStates(newState, mask, yield) {
+			if !recursiveEnumerateStates(newState, mask, depth+1, yield) {
 				return false
 			}
 		}
 
 		if len(potentialActions) == 0 {
 			newState := ApplyAction(state, Action{})
-			if !recursiveEnumerateStates(newState, mask, yield) {
+			if !recursiveEnumerateStates(newState, mask, depth+1, yield) {
 				return false
 			}
 		}
 	}
 
-	return yield(state)
+	return yield(depth, state)
 }
 
 func init() {
