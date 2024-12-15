@@ -10,8 +10,9 @@ import (
 // TODO: Figure out how to generalize the FileDB struct
 // without incurring allocations.
 type depthMap struct {
-	f    *os.File
-	mmap []byte
+	f         *os.File
+	valueSize int
+	mmap      []byte
 }
 
 func newDepthMap(path string, numStates int) (*depthMap, error) {
@@ -20,7 +21,8 @@ func newDepthMap(path string, numStates int) (*depthMap, error) {
 		return nil, err
 	}
 
-	fileSize := 2 * numStates
+	valueSize := 8
+	fileSize := valueSize * numStates
 	if err := f.Truncate(int64(fileSize)); err != nil {
 		_ = f.Close()
 		return nil, err
@@ -35,21 +37,22 @@ func newDepthMap(path string, numStates int) (*depthMap, error) {
 	}
 
 	return &depthMap{
-		f:    f,
-		mmap: mmap,
+		f:         f,
+		mmap:      mmap,
+		valueSize: valueSize,
 	}, nil
 }
 
 func (dm *depthMap) Set(id int, depth int) {
-	idx := 2 * id
-	buf := dm.mmap[idx : idx+2]
-	binary.LittleEndian.PutUint16(buf, uint16(depth))
+	idx := dm.valueSize * id
+	buf := dm.mmap[idx : idx+dm.valueSize]
+	binary.LittleEndian.PutUint64(buf, uint64(depth))
 }
 
 func (dm *depthMap) Get(id int) int {
-	idx := 2 * id
-	buf := dm.mmap[idx : idx+2]
-	return int(binary.LittleEndian.Uint16(buf))
+	idx := dm.valueSize * id
+	buf := dm.mmap[idx : idx+dm.valueSize]
+	return int(binary.LittleEndian.Uint64(buf))
 }
 
 func (dm *depthMap) Close() error {

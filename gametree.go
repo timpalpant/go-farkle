@@ -141,13 +141,13 @@ var rollIDToPotentialActions = func() [][]Action {
 
 // Recalculate the value of all states in the given iterator,
 // updating the value of each state in the database.
-func UpdateAll(db DB, states iter.Seq2[uint16, GameState]) {
+func UpdateAll(db DB, states iter.Seq2[uint64, GameState]) {
 	// Recalculate all other states.
 	var mx sync.RWMutex
 	var wg sync.WaitGroup
 	numWorkers := runtime.NumCPU()
 	workCh := make(chan GameState, numWorkers)
-	currentDepth := uint16(0)
+	currentDepth := uint64(0)
 	for depth, state := range states {
 		if depth != currentDepth {
 			// Wait for previous depth to complete.
@@ -242,7 +242,7 @@ func calcStateValue(state GameState, db DB) [maxNumPlayers]float64 {
 }
 
 // Save all game states from the given iterator to a file.
-func SaveGameStates(states iter.Seq2[uint16, GameState], path string) error {
+func SaveGameStates(states iter.Seq2[uint64, GameState], path string) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -251,12 +251,12 @@ func SaveGameStates(states iter.Seq2[uint16, GameState], path string) error {
 	w := bufio.NewWriterSize(f, 4*1024*1024)
 
 	glog.Infof("Saving game states to: %s", path)
-	buf := make([]byte, maxSizeOfGameState+2)
+	buf := make([]byte, maxSizeOfGameState+8)
 	i := 0
 	for depth, state := range states {
-		binary.LittleEndian.PutUint16(buf[:2], depth)
-		n := state.SerializeTo(buf[2:])
-		if _, err := w.Write(buf[:n+2]); err != nil {
+		binary.LittleEndian.PutUint64(buf[:8], depth)
+		n := state.SerializeTo(buf[8:])
+		if _, err := w.Write(buf[:n+8]); err != nil {
 			return err
 		}
 
@@ -274,17 +274,17 @@ func SaveGameStates(states iter.Seq2[uint16, GameState], path string) error {
 }
 
 // Return an iterator over all game states in the given file.
-func IterGameStates(numPlayers int, path string) (iter.Seq2[uint16, GameState], error) {
+func IterGameStates(numPlayers int, path string) (iter.Seq2[uint64, GameState], error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return func(yield func(uint16, GameState) bool) {
+	return func(yield func(uint64, GameState) bool) {
 		defer f.Close()
 		r := bufio.NewReaderSize(f, 4*1024*1024)
 
-		buf := make([]byte, numPlayers+3+2)
+		buf := make([]byte, numPlayers+3+8)
 		for {
 			_, err := io.ReadFull(r, buf)
 			if err == io.EOF {
@@ -293,8 +293,8 @@ func IterGameStates(numPlayers int, path string) (iter.Seq2[uint16, GameState], 
 				panic(fmt.Errorf("error reading game states: %w", err))
 			}
 
-			depth := binary.LittleEndian.Uint16(buf[:2])
-			state := GameStateFromBytes(buf[2:])
+			depth := binary.LittleEndian.Uint64(buf[:8])
+			state := GameStateFromBytes(buf[8:])
 			if !yield(depth, state) {
 				break
 			}
@@ -305,7 +305,7 @@ func IterGameStates(numPlayers int, path string) (iter.Seq2[uint16, GameState], 
 // Return an iterator over all distinct game states and their depth in the game tree.
 // Game states are sorted by depth in descending order such that end game states
 // are enumerated before early game states.
-func SortedGameStates(numPlayers int, workDir string) iter.Seq2[uint16, GameState] {
+func SortedGameStates(numPlayers int, workDir string) iter.Seq2[uint64, GameState] {
 	sorter := extsort.New(&extsort.Options{
 		WorkDir:    workDir,
 		Compare:    compareGameStateDepth,
@@ -316,14 +316,10 @@ func SortedGameStates(numPlayers int, workDir string) iter.Seq2[uint16, GameStat
 		calcNumDistinctStates(numPlayers), numPlayers)
 	i := 0
 	for depth, gs := range allGameStates(numPlayers, workDir) {
-		if depth > math.MaxUint16 {
-			panic(fmt.Errorf("game state has depth %d > max uint8", depth))
-		}
-
-		data := make([]byte, maxSizeOfGameState+2)
-		binary.LittleEndian.PutUint16(data[:2], uint16(depth))
-		n := gs.SerializeTo(data[2:])
-		if err := sorter.Append(data[:n+2]); err != nil {
+		data := make([]byte, maxSizeOfGameState+8)
+		binary.LittleEndian.PutUint64(data[:8], uint64(depth))
+		n := gs.SerializeTo(data[8:])
+		if err := sorter.Append(data[:n+8]); err != nil {
 			panic(fmt.Errorf("error sorting states: %w", err))
 		}
 
@@ -339,11 +335,11 @@ func SortedGameStates(numPlayers int, workDir string) iter.Seq2[uint16, GameStat
 		panic(fmt.Errorf("error sorting game states: %w", err))
 	}
 
-	return func(yield func(uint16, GameState) bool) {
+	return func(yield func(uint64, GameState) bool) {
 		for iter.Next() {
 			data := iter.Data()
-			depth := binary.LittleEndian.Uint16(data[:2])
-			state := GameStateFromBytes(data[2:])
+			depth := binary.LittleEndian.Uint64(data[:8])
+			state := GameStateFromBytes(data[8:])
 			if !yield(depth, state) {
 				break
 			}
@@ -362,8 +358,8 @@ func SortedGameStates(numPlayers int, workDir string) iter.Seq2[uint16, GameStat
 // Sort game states deeper in the tree before earlier states.
 // i.e. end game -> initial state
 func compareGameStateDepth(d1, d2 []byte) int {
-	m := binary.LittleEndian.Uint16(d1)
-	n := binary.LittleEndian.Uint16(d2)
+	m := binary.LittleEndian.Uint64(d1)
+	n := binary.LittleEndian.Uint64(d2)
 
 	if m < n {
 		return -1

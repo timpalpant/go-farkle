@@ -66,7 +66,7 @@ func playGame(db farkle.DB, numPlayers int) {
 			optAction, pWinOpt := farkle.SelectAction(state, rollID, db)
 			pOpt := pWinOpt[0]
 			selectedState := farkle.ApplyAction(state, action)
-			pWinAction := db.Get(selectedState)
+			pWinAction := db.Get(selectedState.ID())
 			pAction := pWinAction[0]
 			if !action.ContinueRolling {
 				pAction = pWinAction[numPlayers-1]

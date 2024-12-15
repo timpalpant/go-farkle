@@ -54,7 +54,7 @@ func main() {
 			os.Exit(1)
 		}
 		farkle.UpdateAll(db, gamesIter)
-		winProb := db.Get(initialState)
+		winProb := db.Get(initialState.ID())
 		glog.Infof("Probability of winning: %v", winProb)
 	}
 
