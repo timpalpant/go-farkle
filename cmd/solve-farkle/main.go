@@ -15,6 +15,7 @@ type Params struct {
 	NumPlayers     int
 	GameStatesPath string
 	DBPath         string
+	CheckpointPath string
 	NumIter        int
 }
 
@@ -23,6 +24,7 @@ func main() {
 	flag.IntVar(&params.NumPlayers, "num_players", 2, "Number of players")
 	flag.StringVar(&params.GameStatesPath, "games", "2player.games", "Path to sorted game states")
 	flag.StringVar(&params.DBPath, "db", "2player.db", "Path to solution database")
+	flag.StringVar(&params.CheckpointPath, "chkpnt", "2player.chkpnt", "Path to checkpoint file")
 	flag.IntVar(&params.NumIter, "num_iter", 10, "Number of value iteration cycles")
 	flag.Parse()
 
@@ -53,7 +55,7 @@ func main() {
 			glog.Errorf("Error loading sorted game states: %v", err)
 			os.Exit(1)
 		}
-		farkle.UpdateAll(db, gamesIter)
+		farkle.UpdateAll(db, gamesIter, params.CheckpointPath)
 		winProb := db.Get(initialState.ID())
 		glog.Infof("Probability of winning: %v", winProb)
 	}

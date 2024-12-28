@@ -9,7 +9,9 @@ import (
 	"math"
 	"os"
 	"runtime"
+	"strconv"
 	"sync"
+	"time"
 
 	"github.com/bsm/extsort"
 	"github.com/golang/glog"
@@ -139,20 +141,31 @@ var rollIDToPotentialActions = func() [][]Action {
 	return result
 }()
 
+const checkpointInterval = 5 * time.Minute
+
 // Recalculate the value of all states in the given iterator,
 // updating the value of each state in the database.
-func UpdateAll(db DB, states iter.Seq2[uint64, GameState]) {
+func UpdateAll(db DB, states iter.Seq2[uint64, GameState], chkpntPath string) {
 	// Recalculate all other states.
 	var mx sync.RWMutex
 	var wg sync.WaitGroup
 	numWorkers := runtime.NumCPU()
 	workCh := make(chan GameState, numWorkers)
-	currentDepth := uint64(0)
+	currentDepth := loadCheckpoint(chkpntPath)
+	lastCheckpointTime := time.Now()
 	for depth, state := range states {
 		if depth != currentDepth {
 			// Wait for previous depth to complete.
 			close(workCh)
 			wg.Wait()
+
+			if time.Since(lastCheckpointTime) > checkpointInterval {
+				if err := saveCheckpoint(chkpntPath, depth); err != nil {
+					glog.Warningf("Unable to save checkpoint: %v", err)
+				}
+
+				lastCheckpointTime = time.Now()
+			}
 
 			// Start up workers for next depth.
 			glog.Infof("Processing game states with depth=%d", depth)
@@ -172,6 +185,42 @@ func UpdateAll(db DB, states iter.Seq2[uint64, GameState]) {
 
 	close(workCh)
 	wg.Wait()
+}
+
+func loadCheckpoint(path string) uint64 {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	depthStr, err := io.ReadAll(f)
+	if err != nil {
+		return 0
+	}
+
+	n, err := strconv.ParseInt(string(depthStr), 10, 64)
+	if err != nil {
+		glog.Warningf("Unable to parse checkpoint `%s`: %v",
+			string(depthStr), err)
+		return 0
+	}
+
+	return uint64(n)
+}
+
+func saveCheckpoint(path string, depth uint64) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	depthStr := fmt.Sprintf("%d", depth)
+	if _, err := f.Write([]byte(depthStr)); err != nil {
+		return err
+	}
+
+	return f.Close()
 }
 
 func updateWorker(db DB, workCh <-chan GameState, mx *sync.RWMutex) {
